@@ -2,32 +2,47 @@ FROM openclaw:v2026.2.17
 
 USER root
 
-# System packages: Python3, pip, ca-certificates for Docker repo
+# ── System packages + external repo keys (single apt layer) ──────────
+# Combines: base utils, Docker CLI, Tailscale CLI, GitHub CLI, skill binaries
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-      python3 python3-pip python3-venv ca-certificates curl gnupg && \
-    rm -rf /var/lib/apt/lists/*
-
-# Docker CE CLI (official repo — needed for API 1.44+ compatibility)
-RUN install -m 0755 -d /etc/apt/keyrings && \
-    curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc && \
+      python3 python3-pip python3-venv \
+      ca-certificates curl gnupg \
+      jq ripgrep git ffmpeg tmux && \
+    # Docker CE CLI repo
+    install -m 0755 -d /etc/apt/keyrings && \
+    curl -fsSL https://download.docker.com/linux/debian/gpg \
+      -o /etc/apt/keyrings/docker.asc && \
     chmod a+r /etc/apt/keyrings/docker.asc && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable" \
       > /etc/apt/sources.list.d/docker.list && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends docker-ce-cli && \
-    rm -rf /var/lib/apt/lists/*
-
-# Tailscale CLI (needed for allowTailscale whois identity verification)
-RUN curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg \
+    # Tailscale CLI repo
+    curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg \
       -o /usr/share/keyrings/tailscale-archive-keyring.gpg && \
     curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.tailscale-keyring.list \
       -o /etc/apt/sources.list.d/tailscale.list && \
+    # GitHub CLI repo
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      -o /usr/share/keyrings/githubcli-archive-keyring.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+      > /etc/apt/sources.list.d/github-cli.list && \
+    # Install from all repos in one pass
     apt-get update && \
-    apt-get install -y --no-install-recommends tailscale && \
+    apt-get install -y --no-install-recommends \
+      docker-ce-cli tailscale gh && \
     rm -rf /var/lib/apt/lists/*
 
-# Gold framework Python dependencies + litellm for CrewAI + pydantic-ai with ollama support
+# ── Chromium + Xvfb for browser automation skills ────────────────────
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      chromium xvfb fonts-liberation fonts-noto-color-emoji \
+      libatk-bridge2.0-0 libdrm2 libgbm1 libnss3 libxss1 && \
+    rm -rf /var/lib/apt/lists/*
+ENV CHROME_BIN=/usr/bin/chromium
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=1
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+
+# ── Gold framework Python deps ───────────────────────────────────────
 RUN pip3 install --break-system-packages --no-cache-dir \
       litellm \
       crewai \
@@ -39,7 +54,7 @@ RUN pip3 install --break-system-packages --no-cache-dir \
       ollama \
       langchain
 
-# LanceDB extension deps — upstream pnpm install --filter silently fails, install manually
+# ── LanceDB extension deps ──────────────────────────────────────────
 RUN cd /app/extensions/memory-lancedb && npm install --no-save 2>/dev/null || \
     (mkdir -p /tmp/lancedb-deps && cd /tmp/lancedb-deps && \
      echo '{"private":true}' > package.json && \
@@ -47,11 +62,11 @@ RUN cd /app/extensions/memory-lancedb && npm install --no-save 2>/dev/null || \
      cp -r node_modules /app/extensions/memory-lancedb/ && \
      rm -rf /tmp/lancedb-deps)
 
-# Patch LanceDB config to add nomic-embed-text (Ollama local embeddings, 768 dims)
+# ── LanceDB config patches (nomic-embed-text via Ollama) ────────────
 COPY extensions/memory-lancedb/config.ts /app/extensions/memory-lancedb/config.ts
 COPY extensions/memory-lancedb/openclaw.plugin.json /app/extensions/memory-lancedb/openclaw.plugin.json
 
-# Mem0 history directory
+# ── Runtime directories + permissions ────────────────────────────────
 RUN mkdir -p /home/node/.agentic_ai/mem0 && \
     chown -R node:node /home/node/.agentic_ai
 
