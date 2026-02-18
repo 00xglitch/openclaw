@@ -239,7 +239,7 @@ services:
       OPENAI_BASE_URL: http://ollama:11434/v1
       OPENAI_API_KEY: ollama
       # Chatterbox TTS runs bare metal on host (GPU-accelerated)
-      OPENAI_TTS_BASE_URL: http://172.24.0.1:4123/v1
+      OPENAI_TTS_BASE_URL: http://host.docker.internal:4123/v1
       # Threading
       OPENBLAS_NUM_THREADS: "1"
       OMP_NUM_THREADS: "1"
@@ -257,6 +257,8 @@ services:
         read_only: true
       - /var/run/docker.sock:/var/run/docker.sock
       - /var/run/tailscale/tailscaled.sock:/var/run/tailscale/tailscaled.sock
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     stop_grace_period: 15s
     entrypoint: ["/app/gateway-secrets-env.sh"]
     command:
