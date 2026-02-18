@@ -1,60 +1,45 @@
+# VCS
 .git
-.worktrees
-.bun-cache
-.bun
-.tmp
-**/.tmp
-.DS_Store
-**/.DS_Store
-*.png
-*.jpg
-*.jpeg
-*.webp
-*.gif
-*.mp4
-*.mov
-*.wav
-*.mp3
-node_modules
+.gitignore
+
+# Dependencies (reinstalled in builder)
 **/node_modules
 .pnpm-store
-**/.pnpm-store
-.turbo
-**/.turbo
-.cache
-**/.cache
-.next
-**/.next
-coverage
-**/coverage
-*.log
-tmp
-**/tmp
 
-# build artifacts
+# Build artifacts (rebuilt in builder)
 dist
 **/dist
-apps/macos/.build
-apps/ios/build
-**/*.trace
+.turbo
+coverage
 
-# large app trees not needed for CLI build
-apps/
-assets/
-Peekaboo/
-Swabble/
-Core/
-Users/
-vendor/
+# Platform-specific builds
+apps/linux/out
+apps/*/out
 
-# Needed for building the Canvas A2UI bundle during Docker image builds.
-# Keep the rest of apps/ and vendor/ excluded to avoid a large build context.
-!apps/shared/
-!apps/shared/OpenClawKit/
-!apps/shared/OpenClawKit/Tools/
-!apps/shared/OpenClawKit/Tools/CanvasA2UI/
-!apps/shared/OpenClawKit/Tools/CanvasA2UI/**
-!vendor/a2ui/
-!vendor/a2ui/renderers/
-!vendor/a2ui/renderers/lit/
-!vendor/a2ui/renderers/lit/**
+# Large assets (not needed in gateway image)
+*.mp4
+*.wav
+*.mp3
+*.ogg
+*.flac
+*.avi
+*.mov
+
+# Logs and temp
+*.log
+*.tmp
+.env
+.env.*
+
+# Docker files (avoid recursive context)
+docker/
+Dockerfile*
+docker-compose*.yml
+
+# IDE / OS
+.vscode
+.idea
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
