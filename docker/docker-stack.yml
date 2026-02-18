@@ -207,7 +207,7 @@ services:
 
   # === OpenClaw Gateway ===
   openclaw-gateway:
-    image: openclaw-gateway:local
+    image: openclaw-gateway:v2026.2.17
     networks:
       - openclaw-internal
       - openclaw-monitoring
@@ -259,9 +259,8 @@ services:
       - /var/run/tailscale/tailscaled.sock:/var/run/tailscale/tailscaled.sock
     entrypoint: ["/app/gateway-secrets-env.sh"]
     command:
-      - /app/scripts/docker-entrypoint.sh
       - node
-      - dist/index.js
+      - openclaw.mjs
       - gateway
       - --bind
       - lan
@@ -284,8 +283,10 @@ services:
         limits:
           memory: 4G
       restart_policy:
-        condition: on-failure
+        condition: any
         delay: 10s
+        max_attempts: 5
+        window: 120s
 
 # ═══════════════════════════════════════════════════════════════
 #  OBSERVABILITY — Prometheus + Grafana + Exporters
