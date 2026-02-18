@@ -1,0 +1,226 @@
+services:
+  # === Core OpenClaw ===
+  openclaw-gateway:
+    container_name: openclaw-gateway
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.gateway
+    image: openclaw-gateway:local
+    network_mode: host
+    environment:
+      HOME: /home/node
+      TERM: xterm-256color
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN}
+      CLAUDE_AI_SESSION_KEY: ${CLAUDE_AI_SESSION_KEY}
+      CLAUDE_WEB_SESSION_KEY: ${CLAUDE_WEB_SESSION_KEY}
+      CLAUDE_WEB_COOKIE: ${CLAUDE_WEB_COOKIE}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      # Memory layer connections
+      ZEP_API_URL: http://127.0.0.1:8000
+      ZEP_API_KEY: ${ZEP_API_KEY}
+      OLLAMA_HOST: http://127.0.0.1:11434
+      OLLAMA_BASE_URL: http://127.0.0.1:11434/v1
+      QDRANT_URL: http://127.0.0.1:6333
+      QDRANT_API_KEY: ${QDRANT_API_KEY}
+      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+      # LanceDB memory plugin (Ollama embeddings via OpenAI-compatible API)
+      OPENAI_BASE_URL: http://127.0.0.1:11434/v1
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-ollama}
+      OPENAI_TTS_BASE_URL: http://127.0.0.1:4123/v1
+      # Prevent OpenBLAS from pre-allocating huge thread pools
+      OPENBLAS_NUM_THREADS: "1"
+      OMP_NUM_THREADS: "1"
+    group_add:
+      - "${DOCKER_GID:-960}"
+    volumes:
+      - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
+      # workspace-* dirs are already accessible via parent mount above
+      - agentic-ai-data:/home/node/.agentic_ai
+      - ./skills:/app/skills:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/run/tailscale/tailscaled.sock:/var/run/tailscale/tailscaled.sock
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'node -e "process.env.NODE_TLS_REJECT_UNAUTHORIZED=''0'';fetch(''https://127.0.0.1:${OPENCLAW_GATEWAY_PORT:-9443}/health'').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"',
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    init: true
+    restart: unless-stopped
+    depends_on:
+      ollama:
+        condition: service_started
+    command:
+      [
+        "node",
+        "dist/index.js",
+        "gateway",
+        "--bind",
+        "${OPENCLAW_GATEWAY_BIND:-lan}",
+        "--port",
+        "${OPENCLAW_GATEWAY_PORT:-9443}",
+      ]
+
+  openclaw-cli:
+    container_name: openclaw-cli
+    image: ${OPENCLAW_IMAGE:-openclaw:local}
+    network_mode: host
+    environment:
+      HOME: /home/node
+      TERM: xterm-256color
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      BROWSER: echo
+      CLAUDE_AI_SESSION_KEY: ${CLAUDE_AI_SESSION_KEY}
+      CLAUDE_WEB_SESSION_KEY: ${CLAUDE_WEB_SESSION_KEY}
+      CLAUDE_WEB_COOKIE: ${CLAUDE_WEB_COOKIE}
+      ZEP_API_URL: http://127.0.0.1:8000
+      ZEP_API_KEY: ${ZEP_API_KEY}
+      OLLAMA_HOST: http://127.0.0.1:11434
+      OPENAI_BASE_URL: http://127.0.0.1:11434/v1
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-ollama}
+    volumes:
+      - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
+      # workspace-* dirs are already accessible via parent mount above
+      - agentic-ai-data:/home/node/.agentic_ai
+      - /home/glitch/ws:/home/node/ws:ro
+      - ./skills:/app/skills:ro
+    stdin_open: true
+    tty: true
+    init: true
+    restart: unless-stopped
+    entrypoint: ["tail", "-f", "/dev/null"]
+
+  # === Zep CE Memory Server (episodic memory layer 3) ===
+  zep:
+    image: ghcr.io/getzep/zep:0.27.2
+    network_mode: host
+    environment:
+      ZEP_OPENAI_API_KEY: "${OPENAI_API_KEY:-sk-not-needed}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "grep -q 'State:.*S\\|State:.*R' /proc/1/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    volumes:
+      - ${OPENCLAW_CONFIG_DIR}/zep-config.yaml:/app/config.yaml
+    restart: unless-stopped
+
+  # === PostgreSQL for Zep + LangGraph checkpoints (with pgvector) ===
+  postgres:
+    image: pgvector/pgvector:pg16
+    network_mode: host
+    environment:
+      POSTGRES_USER: zep
+      POSTGRES_PASSWORD: ${ZEP_DB_PASSWORD}
+      POSTGRES_DB: zep
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zep -d zep"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    command:
+      - postgres
+      - -c
+      - listen_addresses=127.0.0.1
+      - -c
+      - shared_buffers=64MB
+      - -c
+      - work_mem=16MB
+      - -c
+      - maintenance_work_mem=64MB
+      - -c
+      - effective_cache_size=256MB
+      - -c
+      - max_connections=20
+    shm_size: 256m
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  # === Ollama (model fallback tiers 3+4, GPU-accelerated) ===
+  ollama:
+    image: ollama/ollama:0.15.4
+    network_mode: host
+    volumes:
+      - ollama-data:/root/.ollama
+    runtime: nvidia
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      OLLAMA_HOST: 127.0.0.1:11434
+      OLLAMA_ORIGINS: "http://127.0.0.1:*,https://127.0.0.1:*"
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+  # === Redis for Mem0 self-hosted backend ===
+  redis:
+    image: redis:7-alpine
+    network_mode: host
+    command: redis-server --bind 127.0.0.1 --port 6379 --maxmemory 256mb --maxmemory-policy allkeys-lru --requirepass ${REDIS_PASSWORD}
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6379", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+
+  # === Open WebUI (ChatGPT-like interface for Ollama) ===
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    network_mode: host
+    environment:
+      OLLAMA_BASE_URL: http://127.0.0.1:11434
+      WEBUI_AUTH: "true"
+      WEBUI_SECRET_KEY: "openclaw-webui-$(openssl rand -hex 32)"
+      PORT: "3080"
+    profiles:
+      - webui  # Only start when explicitly requested
+    volumes:
+      - open-webui-data:/app/backend/data
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # === Qdrant vector DB for semantic memory ===
+  qdrant:
+    image: qdrant/qdrant:v1.16.3
+    network_mode: host
+    command: ["./qdrant"]
+    healthcheck:
+      test: ["CMD-SHELL", "grep -q 'State:.*S\\|State:.*R' /proc/1/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    volumes:
+      - qdrant-data:/qdrant/storage
+      - ./qdrant-config.yaml:/qdrant/config/production.yaml:ro
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  ollama-data:
+  redis-data:
+  qdrant-data:
+  agentic-ai-data:
+  open-webui-data:

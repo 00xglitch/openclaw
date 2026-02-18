@@ -1,0 +1,17 @@
+store:
+  type: postgres
+  postgres:
+    dsn: "postgres://zep:__ZEP_DB_PASSWORD__@postgres:5432/zep?sslmode=disable"
+
+server:
+  host: 0.0.0.0
+  port: 8000
+
+nlp:
+  server_url: ""
+
+log:
+  level: info
+
+memory:
+  message_window: 12
