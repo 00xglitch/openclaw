@@ -257,6 +257,7 @@ services:
         read_only: true
       - /var/run/docker.sock:/var/run/docker.sock
       - /var/run/tailscale/tailscaled.sock:/var/run/tailscale/tailscaled.sock
+    stop_grace_period: 15s
     entrypoint: ["/app/gateway-secrets-env.sh"]
     command:
       - node
