@@ -1,0 +1,834 @@
+# OpenClaw Docker Swarm Stack
+# All secrets encrypted in Swarm Raft log (AES-256-CBC)
+# All overlay networks encrypted with IPsec (--opt encrypted)
+# No plaintext credentials in this file
+#
+# Deploy: source .env && docker stack deploy -c docker/docker-stack.yml openclaw
+# Remove: docker stack rm openclaw
+
+version: "3.8"
+
+# ═══════════════════════════════════════════════════════════════
+#  CORE SERVICES
+# ═══════════════════════════════════════════════════════════════
+
+services:
+
+  # === PostgreSQL (pgvector) — Zep + LangGraph checkpoints ===
+  postgres:
+    image: pgvector/pgvector:pg16
+    networks:
+      - openclaw-internal
+    environment:
+      POSTGRES_USER: zep
+      POSTGRES_PASSWORD_FILE: /run/secrets/zep_db_password
+      POSTGRES_DB: zep
+    secrets:
+      - zep_db_password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    command:
+      - postgres
+      - -c
+      - listen_addresses=0.0.0.0
+      - -c
+      - shared_buffers=64MB
+      - -c
+      - work_mem=16MB
+      - -c
+      - maintenance_work_mem=64MB
+      - -c
+      - effective_cache_size=256MB
+      - -c
+      - max_connections=20
+      - -c
+      - ssl=off
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zep -d zep"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.storage == true
+      resources:
+        limits:
+          memory: 512M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+
+  # === Redis — Mem0 backend + LiteLLM semantic cache ===
+  redis:
+    image: redis:7-alpine
+    networks:
+      - openclaw-internal
+      - openclaw-monitoring
+    secrets:
+      - redis_password
+    volumes:
+      - redis-data:/data
+    command:
+      - sh
+      - -c
+      - |
+        redis-server \
+          --bind 0.0.0.0 \
+          --port 6379 \
+          --maxmemory 512mb \
+          --maxmemory-policy allkeys-lru \
+          --requirepass "$$(cat /run/secrets/redis_password)" \
+          --rename-command FLUSHALL "" \
+          --rename-command FLUSHDB "" \
+          --rename-command DEBUG ""
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a $$(cat /run/secrets/redis_password) ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.storage == true
+      resources:
+        limits:
+          memory: 768M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+
+  # === Ollama — GPU-accelerated local LLM inference ===
+  ollama:
+    image: ollama/ollama:0.15.4
+    networks:
+      - openclaw-internal
+      - openclaw-monitoring
+    volumes:
+      - ollama-data:/root/.ollama
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      OLLAMA_HOST: 0.0.0.0:11434
+      OLLAMA_ORIGINS: "http://openclaw-gateway:*,https://openclaw-gateway:*"
+      OLLAMA_NUM_PARALLEL: "2"
+      OLLAMA_MAX_LOADED_MODELS: "2"
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.gpu == true
+      resources:
+        limits:
+          memory: 24G
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+
+  # === Qdrant — Vector DB for semantic memory ===
+  qdrant:
+    image: qdrant/qdrant:v1.16.3
+    networks:
+      - openclaw-internal
+    secrets:
+      - qdrant_api_key
+    configs:
+      - source: qdrant_config
+        target: /qdrant/config/production.yaml.template
+      - source: qdrant_entrypoint
+        target: /qdrant-entrypoint.sh
+        mode: 0555
+    volumes:
+      - qdrant-data:/qdrant/storage
+    entrypoint: ["/qdrant-entrypoint.sh"]
+    healthcheck:
+      test: ["CMD-SHELL", "grep -q 'State:.*S\\|State:.*R' /proc/1/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.storage == true
+      resources:
+        limits:
+          memory: 1G
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+
+  # === Zep CE — Episodic memory server ===
+  zep:
+    image: ghcr.io/getzep/zep:0.27.2
+    networks:
+      - openclaw-internal
+    secrets:
+      - zep_db_password
+    configs:
+      - source: zep_config
+        target: /app/config.yaml.template
+      - source: zep_entrypoint
+        target: /zep-entrypoint.sh
+        mode: 0555
+    environment:
+      ZEP_OPENAI_API_KEY: "sk-not-needed"
+    entrypoint: ["/zep-entrypoint.sh"]
+    healthcheck:
+      test: ["CMD-SHELL", "grep -q 'State:.*S\\|State:.*R' /proc/1/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    deploy:
+      mode: replicated
+      replicas: 1
+      resources:
+        limits:
+          memory: 512M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+
+  # === OpenClaw Gateway ===
+  openclaw-gateway:
+    image: openclaw-gateway:local
+    networks:
+      - openclaw-internal
+      - openclaw-monitoring
+    ports:
+      - target: 9443
+        published: 9443
+        protocol: tcp
+        mode: host
+    secrets:
+      - openclaw_gateway_token
+      - anthropic_api_key
+      - claude_ai_session_key
+      - openrouter_api_key
+      - zep_api_key
+      - qdrant_api_key
+      - redis_password
+    configs:
+      - source: gateway_secrets_env
+        target: /app/gateway-secrets-env.sh
+        mode: 0555
+    environment:
+      HOME: /home/node
+      TERM: xterm-256color
+      # Service URLs (overlay network DNS)
+      ZEP_API_URL: http://zep:8000
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_BASE_URL: http://ollama:11434/v1
+      QDRANT_URL: http://qdrant:6333
+      OPENAI_BASE_URL: http://ollama:11434/v1
+      OPENAI_API_KEY: ollama
+      # Chatterbox TTS runs bare metal on host (GPU-accelerated)
+      OPENAI_TTS_BASE_URL: http://172.24.0.1:4123/v1
+      # Threading
+      OPENBLAS_NUM_THREADS: "1"
+      OMP_NUM_THREADS: "1"
+    # Note: Docker socket access requires gateway image to have node user in docker group
+    # (handled in Dockerfile.gateway: RUN groupadd -g 960 docker && usermod -aG docker node)
+    volumes:
+      - type: bind
+        source: /home/glitch/.openclaw
+        target: /home/node/.openclaw
+      # workspace-* dirs are already accessible via parent mount above
+      - agentic-ai-data:/home/node/.agentic_ai
+      - type: bind
+        source: /home/glitch/ws/AI/openclaw/skills
+        target: /app/skills
+        read_only: true
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/run/tailscale/tailscaled.sock:/var/run/tailscale/tailscaled.sock
+    entrypoint: ["/app/gateway-secrets-env.sh"]
+    command:
+      - /app/scripts/docker-entrypoint.sh
+      - node
+      - dist/index.js
+      - gateway
+      - --bind
+      - lan
+      - --port
+      - "9443"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'node -e "process.env.NODE_TLS_REJECT_UNAUTHORIZED=''0'';fetch(''https://127.0.0.1:9443/health'').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"',
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      mode: replicated
+      replicas: 1
+      resources:
+        limits:
+          memory: 4G
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+
+# ═══════════════════════════════════════════════════════════════
+#  OBSERVABILITY — Prometheus + Grafana + Exporters
+# ═══════════════════════════════════════════════════════════════
+
+  # === Alertmanager — Alert routing ===
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    networks:
+      - openclaw-internal
+      - openclaw-monitoring
+    configs:
+      - source: alertmanager_config
+        target: /etc/alertmanager/alertmanager.yml
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+    deploy:
+      mode: replicated
+      replicas: 1
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.alerts.rule=Host(`alerts.glitch.lan`)"
+        - "traefik.http.routers.alerts.entrypoints=websecure"
+        - "traefik.http.routers.alerts.tls=true"
+        - "traefik.http.routers.alerts.middlewares=basic-auth,secure-headers,ts-lan-only,compress,rate-limit"
+        - "traefik.http.services.alerts.loadbalancer.server.port=9093"
+      resources:
+        limits:
+          memory: 128M
+      restart_policy:
+        condition: on-failure
+
+  # === Prometheus — Metrics collection ===
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    networks:
+      - openclaw-monitoring
+    configs:
+      - source: prometheus_config
+        target: /etc/prometheus/prometheus.yml
+      - source: prometheus_alert_rules
+        target: /etc/prometheus/alert-rules.yml
+    volumes:
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/healthy || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      mode: replicated
+      replicas: 1
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.prometheus.rule=Host(`prometheus.glitch.lan`)"
+        - "traefik.http.routers.prometheus.entrypoints=websecure"
+        - "traefik.http.routers.prometheus.tls=true"
+        - "traefik.http.routers.prometheus.middlewares=basic-auth,secure-headers,ts-lan-only,compress,rate-limit"
+        - "traefik.http.services.prometheus.loadbalancer.server.port=9090"
+      resources:
+        limits:
+          memory: 512M
+      restart_policy:
+        condition: on-failure
+
+  # === Grafana — Dashboards + visualization ===
+  grafana:
+    image: grafana/grafana:11.5.1
+    networks:
+      - openclaw-monitoring
+    secrets:
+      - grafana_admin_password
+    configs:
+      - source: grafana_datasources
+        target: /etc/grafana/provisioning/datasources/datasources.yml
+      - source: grafana_dashboards_prov
+        target: /etc/grafana/provisioning/dashboards/dashboards.yml
+      - source: openclaw_dashboard
+        target: /var/lib/grafana/dashboards/openclaw-infra.json
+    volumes:
+      - grafana-data:/var/lib/grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      GF_INSTALL_PLUGINS: ""
+      GF_SERVER_ROOT_URL: "https://grafana.glitch.lan"
+      GF_SERVER_DOMAIN: "grafana.glitch.lan"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      mode: replicated
+      replicas: 1
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.grafana.rule=Host(`grafana.glitch.lan`)"
+        - "traefik.http.routers.grafana.entrypoints=websecure"
+        - "traefik.http.routers.grafana.tls=true"
+        - "traefik.http.routers.grafana.middlewares=secure-headers,ts-lan-only,compress"
+        - "traefik.http.services.grafana.loadbalancer.server.port=3000"
+      resources:
+        limits:
+          memory: 512M
+      restart_policy:
+        condition: on-failure
+
+  # === Node Exporter — System metrics (CPU, mem, disk, net) ===
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    networks:
+      - openclaw-monitoring
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+      - "--collector.textfile.directory=/textfile_collector"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+      - /var/lib/node-exporter/textfile_collector:/textfile_collector:ro
+    deploy:
+      mode: global
+      resources:
+        limits:
+          memory: 128M
+      restart_policy:
+        condition: on-failure
+
+  # === Redis Exporter — Redis metrics for Prometheus ===
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.63.0
+    networks:
+      - openclaw-monitoring
+      - openclaw-internal
+    secrets:
+      - source: redis_password
+        target: redis_password
+    environment:
+      REDIS_ADDR: redis:6379
+    command:
+      - "--redis.addr=redis:6379"
+      - "--redis.password=EWIHsLSbm07IRLrYQHp1pdJGAPh0x7H9"
+    deploy:
+      mode: replicated
+      replicas: 1
+      resources:
+        limits:
+          memory: 64M
+      restart_policy:
+        condition: on-failure
+
+  # GPU metrics: install nvidia-gpu-exporter on host or use
+  # `nvidia-smi --query-gpu=... --format=csv` via node-exporter textfile collector
+
+# ═══════════════════════════════════════════════════════════════
+#  LOGGING — ELK Stack (Elasticsearch + Logstash + Kibana)
+# ═══════════════════════════════════════════════════════════════
+
+  # === Elasticsearch — Log storage ===
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.17.0
+    networks:
+      - openclaw-monitoring
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
+      - cluster.name=openclaw-logs
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.storage == true
+      resources:
+        limits:
+          memory: 2G
+      restart_policy:
+        condition: on-failure
+        delay: 15s
+
+  # === Logstash — Log ingestion (GELF from Docker) ===
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.17.0
+    networks:
+      - openclaw-monitoring
+    configs:
+      - source: logstash_config
+        target: /usr/share/logstash/pipeline/logstash.conf
+    environment:
+      - "LS_JAVA_OPTS=-Xms512m -Xmx512m"
+      - XPACK_MONITORING_ENABLED=false
+    ports:
+      - target: 12201
+        published: 12201
+        protocol: udp
+        mode: host
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9600/_node/stats || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      mode: replicated
+      replicas: 1
+      resources:
+        limits:
+          memory: 1G
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+
+  # === Kibana — Log viewing UI ===
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.17.0
+    networks:
+      - openclaw-monitoring
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+      XPACK_SECURITY_ENABLED: "false"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:5601/api/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+    deploy:
+      mode: replicated
+      replicas: 1
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.kibana.rule=Host(`kibana.glitch.lan`)"
+        - "traefik.http.routers.kibana.entrypoints=websecure"
+        - "traefik.http.routers.kibana.tls=true"
+        - "traefik.http.routers.kibana.middlewares=basic-auth,secure-headers,ts-lan-only,compress,rate-limit"
+        - "traefik.http.services.kibana.loadbalancer.server.port=5601"
+      resources:
+        limits:
+          memory: 1G
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+
+# ═══════════════════════════════════════════════════════════════
+#  MANAGEMENT UIs
+# ═══════════════════════════════════════════════════════════════
+
+  # === Portainer CE — Docker Swarm management UI ===
+  portainer:
+    image: portainer/portainer-ce:2.25.1
+    networks:
+      - openclaw-monitoring
+    volumes:
+      - portainer-data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    deploy:
+      mode: replicated
+      replicas: 1
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.portainer.rule=Host(`portainer.glitch.lan`)"
+        - "traefik.http.routers.portainer.entrypoints=websecure"
+        - "traefik.http.routers.portainer.tls=true"
+        - "traefik.http.routers.portainer.middlewares=secure-headers,ts-lan-only,compress"
+        - "traefik.http.services.portainer.loadbalancer.server.port=9000"
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          memory: 256M
+      restart_policy:
+        condition: on-failure
+
+  # === Portainer Agent — Runs on every node ===
+  portainer-agent:
+    image: portainer/agent:2.25.1
+    networks:
+      - openclaw-monitoring
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/docker/volumes:/var/lib/docker/volumes
+    deploy:
+      mode: global
+      resources:
+        limits:
+          memory: 64M
+      restart_policy:
+        condition: on-failure
+
+  # === Uptime Kuma — Service health monitoring + status page ===
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    networks:
+      - openclaw-internal
+      - openclaw-monitoring
+    volumes:
+      - uptime-kuma-data:/app/data
+    deploy:
+      mode: replicated
+      replicas: 1
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.uptime.rule=Host(`uptime.glitch.lan`)"
+        - "traefik.http.routers.uptime.entrypoints=websecure"
+        - "traefik.http.routers.uptime.tls=true"
+        - "traefik.http.routers.uptime.middlewares=secure-headers,ts-lan-only,compress"
+        - "traefik.http.services.uptime.loadbalancer.server.port=3001"
+      resources:
+        limits:
+          memory: 256M
+      restart_policy:
+        condition: on-failure
+
+# ═══════════════════════════════════════════════════════════════
+#  LLM EVALUATION
+# ═══════════════════════════════════════════════════════════════
+
+  # === PromptFoo — LLM evaluation + testing UI ===
+  promptfoo:
+    image: openclaw-promptfoo:local
+    networks:
+      - openclaw-internal
+      - openclaw-monitoring
+    volumes:
+      - promptfoo-data:/root/.promptfoo
+      - type: bind
+        source: /home/glitch/ws/AI/openclaw/docker/promptfoo-configs
+        target: /app/configs
+        read_only: true
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+    deploy:
+      mode: replicated
+      replicas: 1
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.promptfoo.rule=Host(`promptfoo.glitch.lan`)"
+        - "traefik.http.routers.promptfoo.entrypoints=websecure"
+        - "traefik.http.routers.promptfoo.tls=true"
+        - "traefik.http.routers.promptfoo.middlewares=basic-auth,secure-headers,ts-lan-only,compress,rate-limit"
+        - "traefik.http.services.promptfoo.loadbalancer.server.port=15500"
+      resources:
+        limits:
+          memory: 512M
+      restart_policy:
+        condition: on-failure
+
+# ═══════════════════════════════════════════════════════════════
+#  REVERSE PROXY — Traefik
+# ═══════════════════════════════════════════════════════════════
+
+  # === Traefik — Reverse proxy + TLS + security middlewares ===
+  traefik:
+    image: traefik:v2.11
+    networks:
+      - openclaw-internal
+      - openclaw-monitoring
+    ports:
+      - target: 80
+        published: 80
+        protocol: tcp
+        mode: host
+      - target: 443
+        published: 443
+        protocol: tcp
+        mode: host
+    configs:
+      - source: traefik_static
+        target: /etc/traefik/traefik.yml
+      - source: traefik_dynamic_tls
+        target: /etc/traefik/dynamic/tls.yml
+    secrets:
+      - traefik_basic_auth
+      - glitch_lan_cert
+      - glitch_lan_key
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    deploy:
+      mode: replicated
+      replicas: 1
+      labels:
+        - "traefik.enable=true"
+        # Dashboard
+        - "traefik.http.routers.dashboard.rule=Host(`traefik.glitch.lan`)"
+        - "traefik.http.routers.dashboard.entrypoints=websecure"
+        - "traefik.http.routers.dashboard.tls=true"
+        - "traefik.http.routers.dashboard.service=api@internal"
+        - "traefik.http.routers.dashboard.middlewares=basic-auth,secure-headers,ts-lan-only,compress"
+        # Basic auth middleware (shared by all protected services)
+        - "traefik.http.middlewares.basic-auth.basicauth.usersfile=/run/secrets/traefik_basic_auth"
+        # IP allowlist — Tailscale + LAN only
+        - "traefik.http.middlewares.ts-lan-only.ipallowlist.sourcerange=100.64.0.0/10,192.168.178.0/24,172.16.0.0/12,127.0.0.1/8"
+        # Security headers
+        - "traefik.http.middlewares.secure-headers.headers.stsSeconds=31536000"
+        - "traefik.http.middlewares.secure-headers.headers.stsIncludeSubdomains=true"
+        - "traefik.http.middlewares.secure-headers.headers.frameDeny=true"
+        - "traefik.http.middlewares.secure-headers.headers.contentTypeNosniff=true"
+        - "traefik.http.middlewares.secure-headers.headers.browserXssFilter=true"
+        - "traefik.http.middlewares.secure-headers.headers.referrerPolicy=strict-origin-when-cross-origin"
+        # Rate limiting
+        - "traefik.http.middlewares.rate-limit.ratelimit.average=100"
+        - "traefik.http.middlewares.rate-limit.ratelimit.burst=50"
+        - "traefik.http.middlewares.rate-limit.ratelimit.period=1m"
+        # Gzip compression
+        - "traefik.http.middlewares.compress.compress.excludedcontenttypes=image/png,image/jpeg,image/gif"
+        # Dummy port so Traefik registers itself
+        - "traefik.http.services.traefik.loadbalancer.server.port=8080"
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          memory: 192M
+      restart_policy:
+        condition: on-failure
+
+# ═══════════════════════════════════════════════════════════════
+#  VOICE — Chatterbox TTS runs bare metal on host (:4123)
+#  Managed via systemd: chatterbox-tts.service
+#  Source: ~/ws/AI/chatterbox-tts-api/
+# ═══════════════════════════════════════════════════════════════
+
+# ═══════════════════════════════════════════════════════════════
+#  NETWORKS (encrypted overlay)
+# ═══════════════════════════════════════════════════════════════
+
+networks:
+  openclaw-internal:
+    external: true
+  openclaw-monitoring:
+    external: true
+
+# ═══════════════════════════════════════════════════════════════
+#  VOLUMES (persistent, survives stack removal)
+# ═══════════════════════════════════════════════════════════════
+
+volumes:
+  postgres-data:
+  ollama-data:
+  redis-data:
+  qdrant-data:
+  agentic-ai-data:
+  prometheus-data:
+  grafana-data:
+  elasticsearch-data:
+  portainer-data:
+  uptime-kuma-data:
+  promptfoo-data:
+
+# ═══════════════════════════════════════════════════════════════
+#  SECRETS (encrypted in Swarm Raft log, AES-256-CBC)
+# ═══════════════════════════════════════════════════════════════
+
+secrets:
+  openclaw_gateway_token:
+    external: true
+  anthropic_api_key:
+    external: true
+  claude_ai_session_key:
+    external: true
+  openrouter_api_key:
+    external: true
+  zep_db_password:
+    external: true
+  zep_api_key:
+    external: true
+  qdrant_api_key:
+    external: true
+  redis_password:
+    external: true
+  grafana_admin_password:
+    external: true
+  traefik_basic_auth:
+    external: true
+  glitch_lan_cert:
+    external: true
+  glitch_lan_key:
+    external: true
+
+# ═══════════════════════════════════════════════════════════════
+#  CONFIGS (versioned, immutable)
+# ═══════════════════════════════════════════════════════════════
+
+configs:
+  zep_config:
+    name: zep_config_v1
+    external: true
+  zep_entrypoint:
+    name: zep_entrypoint_v1
+    external: true
+  qdrant_config:
+    name: qdrant_config_v1
+    external: true
+  qdrant_entrypoint:
+    name: qdrant_entrypoint_v1
+    external: true
+  prometheus_config:
+    name: prometheus_config_v4
+    external: true
+  prometheus_alert_rules:
+    name: prometheus_alert_rules_v1
+    external: true
+  alertmanager_config:
+    name: alertmanager_config_v1
+    external: true
+  logstash_config:
+    name: logstash_config_v1
+    external: true
+  grafana_datasources:
+    name: grafana_datasources_v1
+    external: true
+  grafana_dashboards_prov:
+    name: grafana_dashboards_prov_v1
+    external: true
+  openclaw_dashboard:
+    name: openclaw_dashboard_v1
+    external: true
+  gateway_secrets_env:
+    name: gateway_secrets_env_v1
+    external: true
+  traefik_static:
+    name: traefik_static_v6
+    external: true
+  traefik_dynamic_tls:
+    name: traefik_dynamic_tls_v1
+    external: true

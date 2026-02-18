@@ -1,0 +1,31 @@
+service:
+  host: 0.0.0.0
+  http_port: 6333
+  grpc_port: 6334
+  api_key: "__QDRANT_API_KEY__"
+  enable_cors: false
+
+cluster:
+  enabled: false
+
+storage:
+  performance:
+    max_optimization_threads: 0
+  optimizers:
+    default_segment_number: 2
+    memmap_threshold_kb: 50000
+    indexing_threshold_kb: 20000
+    vacuum_min_vector_number: 1000
+    max_segment_size_kb: 0
+    max_optimization_threads: 0
+  storage: mmap
+  wal:
+    wal_capacity_mb: 32
+    wal_segments_ahead: 0
+
+hnsw_index:
+  m: 16
+  ef_construct: 128
+  max_indexing_threads: 0
+  on_disk: false
+  payload_m: 16
