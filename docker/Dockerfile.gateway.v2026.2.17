@@ -1,0 +1,61 @@
+FROM openclaw:v2026.2.17
+
+USER root
+
+# System packages: Python3, pip, ca-certificates for Docker repo
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      python3 python3-pip python3-venv ca-certificates curl gnupg && \
+    rm -rf /var/lib/apt/lists/*
+
+# Docker CE CLI (official repo — needed for API 1.44+ compatibility)
+RUN install -m 0755 -d /etc/apt/keyrings && \
+    curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc && \
+    chmod a+r /etc/apt/keyrings/docker.asc && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable" \
+      > /etc/apt/sources.list.d/docker.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends docker-ce-cli && \
+    rm -rf /var/lib/apt/lists/*
+
+# Tailscale CLI (needed for allowTailscale whois identity verification)
+RUN curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg \
+      -o /usr/share/keyrings/tailscale-archive-keyring.gpg && \
+    curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.tailscale-keyring.list \
+      -o /etc/apt/sources.list.d/tailscale.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends tailscale && \
+    rm -rf /var/lib/apt/lists/*
+
+# Gold framework Python dependencies + litellm for CrewAI + pydantic-ai with ollama support
+RUN pip3 install --break-system-packages --no-cache-dir \
+      litellm \
+      crewai \
+      'pydantic-ai[ollama]' \
+      mem0ai \
+      zep-python \
+      qdrant-client \
+      openai \
+      ollama \
+      langchain
+
+# LanceDB extension deps — upstream pnpm install --filter silently fails, install manually
+RUN cd /app/extensions/memory-lancedb && npm install --no-save 2>/dev/null || \
+    (mkdir -p /tmp/lancedb-deps && cd /tmp/lancedb-deps && \
+     echo '{"private":true}' > package.json && \
+     npm install --no-save openai @lancedb/lancedb @sinclair/typebox && \
+     cp -r node_modules /app/extensions/memory-lancedb/ && \
+     rm -rf /tmp/lancedb-deps)
+
+# Patch LanceDB config to add nomic-embed-text (Ollama local embeddings, 768 dims)
+COPY extensions/memory-lancedb/config.ts /app/extensions/memory-lancedb/config.ts
+COPY extensions/memory-lancedb/openclaw.plugin.json /app/extensions/memory-lancedb/openclaw.plugin.json
+
+# Mem0 history directory
+RUN mkdir -p /home/node/.agentic_ai/mem0 && \
+    chown -R node:node /home/node/.agentic_ai
+
+# Docker socket access: host docker group GID=960
+RUN groupadd -g 960 docker && usermod -aG docker node
+
+USER node
