@@ -207,7 +207,7 @@ services:
 
   # === OpenClaw Gateway ===
   openclaw-gateway:
-    image: openclaw-gateway:v2026.2.20
+    image: openclaw-gateway:v2026.2.20-patched
     networks:
       - openclaw-internal
       - openclaw-monitoring
