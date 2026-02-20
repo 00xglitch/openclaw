@@ -1,4 +1,4 @@
-FROM openclaw:v2026.2.20
+FROM openclaw:v2026.2.20-patched
 
 USER root
 
