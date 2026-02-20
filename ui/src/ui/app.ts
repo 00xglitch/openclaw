@@ -132,6 +132,7 @@ export class OpenClawApp extends LitElement {
   @state() assistantAgentId = bootAssistantIdentity.agentId ?? null;
 
   @state() sessionKey = this.settings.sessionKey;
+  @state() chatAgentId: string | null = null;
   @state() chatLoading = false;
   @state() chatSending = false;
   @state() chatMessage = "";
@@ -229,6 +230,14 @@ export class OpenClawApp extends LitElement {
   @state() agentSkillsError: string | null = null;
   @state() agentSkillsReport: SkillStatusReport | null = null;
   @state() agentSkillsAgentId: string | null = null;
+
+  @state() agentCreateOpen = false;
+  @state() agentCreateName = "";
+  @state() agentCreateWorkspace = "";
+  @state() agentCreateToolProfile = "full";
+  @state() agentCreateEmoji = "🤖";
+  @state() agentCreateBusy = false;
+  @state() agentCreateError: string | null = null;
 
   @state() sessionsLoading = false;
   @state() sessionsResult: SessionsListResult | null = null;

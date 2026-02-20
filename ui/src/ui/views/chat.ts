@@ -195,12 +195,96 @@ function handlePaste(e: ClipboardEvent, props: ChatProps) {
         id: generateAttachmentId(),
         dataUrl,
         mimeType: file.type,
+        fileName: file.name,
+        fileSize: file.size,
       };
       const current = props.attachments ?? [];
       props.onAttachmentsChange?.([...current, newAttachment]);
     });
     reader.readAsDataURL(file);
   }
+}
+
+function handleFileInput(e: Event, props: ChatProps) {
+  const input = e.target as HTMLInputElement;
+  const files = input.files;
+  if (!files || files.length === 0 || !props.onAttachmentsChange) {
+    return;
+  }
+
+  const current = props.attachments ?? [];
+  const newAttachments: ChatAttachment[] = [];
+
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      const dataUrl = reader.result as string;
+      const attachment: ChatAttachment = {
+        id: generateAttachmentId(),
+        dataUrl,
+        mimeType: file.type,
+        fileName: file.name,
+        fileSize: file.size,
+      };
+      newAttachments.push(attachment);
+      if (newAttachments.length === files.length) {
+        props.onAttachmentsChange?.([...current, ...newAttachments]);
+      }
+    });
+    reader.readAsDataURL(file);
+  }
+
+  // Reset input so the same file can be selected again
+  input.value = "";
+}
+
+function handleDragOver(e: DragEvent) {
+  e.preventDefault();
+  e.stopPropagation();
+}
+
+function handleDrop(e: DragEvent, props: ChatProps) {
+  e.preventDefault();
+  e.stopPropagation();
+
+  const files = e.dataTransfer?.files;
+  if (!files || files.length === 0 || !props.onAttachmentsChange) {
+    return;
+  }
+
+  const current = props.attachments ?? [];
+  const newAttachments: ChatAttachment[] = [];
+
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      const dataUrl = reader.result as string;
+      const attachment: ChatAttachment = {
+        id: generateAttachmentId(),
+        dataUrl,
+        mimeType: file.type,
+        fileName: file.name,
+        fileSize: file.size,
+      };
+      newAttachments.push(attachment);
+      if (newAttachments.length === files.length) {
+        props.onAttachmentsChange?.([...current, ...newAttachments]);
+      }
+    });
+    reader.readAsDataURL(file);
+  }
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes}B`;
+  }
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)}KB`;
+  }
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
 }
 
 function renderAttachmentPreview(props: ChatProps) {
@@ -211,14 +295,35 @@ function renderAttachmentPreview(props: ChatProps) {
 
   return html`
     <div class="chat-attachments">
-      ${attachments.map(
-        (att) => html`
+      ${attachments.map((att) => {
+        const isImage = att.mimeType.startsWith("image/");
+        return html`
           <div class="chat-attachment">
-            <img
-              src=${att.dataUrl}
-              alt="Attachment preview"
-              class="chat-attachment__img"
-            />
+            ${
+              isImage
+                ? html`
+                  <img
+                    src=${att.dataUrl}
+                    alt="Attachment preview"
+                    class="chat-attachment__img"
+                  />
+                `
+                : html`
+                  <div class="chat-attachment__file">
+                    <div class="chat-attachment__file-icon">📄</div>
+                    <div class="chat-attachment__file-info">
+                      <div class="chat-attachment__file-name">${att.fileName || "file"}</div>
+                      ${
+                        att.fileSize
+                          ? html`<div class="chat-attachment__file-size">
+                            ${formatFileSize(att.fileSize)}
+                          </div>`
+                          : nothing
+                      }
+                    </div>
+                  </div>
+                `
+            }
             <button
               class="chat-attachment__remove"
               type="button"
@@ -231,8 +336,8 @@ function renderAttachmentPreview(props: ChatProps) {
               ${icons.x}
             </button>
           </div>
-        `,
-      )}
+        `;
+      })}
     </div>
   `;
 }
@@ -420,9 +525,24 @@ export function renderChat(props: ChatProps) {
           : nothing
       }
 
-      <div class="chat-compose">
+      <div
+        class="chat-compose"
+        @dragover=${handleDragOver}
+        @drop=${(e: DragEvent) => handleDrop(e, props)}
+      >
         ${renderAttachmentPreview(props)}
         <div class="chat-compose__row">
+          <label class="chat-compose__attach-btn" title="Attach files">
+            <input
+              type="file"
+              multiple
+              accept="image/*,application/pdf,text/*,.doc,.docx,.txt,.md"
+              style="display:none"
+              ?disabled=${!props.connected}
+              @change=${(e: Event) => handleFileInput(e, props)}
+            />
+            📎
+          </label>
           <label class="field chat-compose__field">
             <span>Message</span>
             <textarea

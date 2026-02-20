@@ -1,4 +1,4 @@
-import { html } from "lit";
+import { html, nothing } from "lit";
 import { repeat } from "lit/directives/repeat.js";
 import { t } from "../i18n/index.ts";
 import { refreshChat } from "./app-chat.ts";
@@ -127,8 +127,51 @@ export function renderChatControls(state: AppViewState) {
       <circle cx="12" cy="12" r="3"></circle>
     </svg>
   `;
+  const agents = state.agentsList?.agents ?? [];
+  const showAgentPicker = agents.length > 1;
+
   return html`
     <div class="chat-controls">
+      ${
+        showAgentPicker
+          ? html`
+            <label class="field chat-controls__agent">
+              <select
+                .value=${state.chatAgentId ?? ""}
+                ?disabled=${!state.connected}
+                @change=${(e: Event) => {
+                  const selectedAgentId = (e.target as HTMLSelectElement).value;
+                  state.chatAgentId = selectedAgentId || null;
+
+                  // Switch to the agent's main session
+                  const nextSessionKey = selectedAgentId
+                    ? `agent:${selectedAgentId}:main`
+                    : mainSessionKey || "main";
+
+                  resetChatStateForSessionSwitch(state, nextSessionKey);
+                  void state.loadAssistantIdentity();
+                  syncUrlWithSessionKey(
+                    state as unknown as Parameters<typeof syncUrlWithSessionKey>[0],
+                    nextSessionKey,
+                    true,
+                  );
+                  void loadChatHistory(state as unknown as ChatState);
+                }}
+              >
+                <option value="">All agents</option>
+                ${repeat(
+                  agents,
+                  (agent) => agent.id,
+                  (agent) =>
+                    html`<option value=${agent.id}>
+                      ${agent.identity?.name ?? agent.name ?? agent.id}
+                    </option>`,
+                )}
+              </select>
+            </label>
+          `
+          : nothing
+      }
       <label class="field chat-controls__session">
         <select
           .value=${state.sessionKey}

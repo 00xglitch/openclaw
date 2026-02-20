@@ -692,6 +692,76 @@ export function renderApp(state: AppViewState) {
                     : { fallbacks: normalized };
                   updateConfigFormValue(state, basePath, next);
                 },
+                createOpen: state.agentCreateOpen,
+                createName: state.agentCreateName,
+                createWorkspace: state.agentCreateWorkspace,
+                createToolProfile: state.agentCreateToolProfile,
+                createEmoji: state.agentCreateEmoji,
+                createBusy: state.agentCreateBusy,
+                createError: state.agentCreateError,
+                onCreateOpen: () => {
+                  state.agentCreateOpen = true;
+                  state.agentCreateName = "";
+                  state.agentCreateWorkspace = "";
+                  state.agentCreateToolProfile = "full";
+                  state.agentCreateEmoji = "🤖";
+                  state.agentCreateError = null;
+                },
+                onCreateClose: () => {
+                  state.agentCreateOpen = false;
+                },
+                onCreateNameChange: (value: string) => {
+                  state.agentCreateName = value;
+                },
+                onCreateWorkspaceChange: (value: string) => {
+                  state.agentCreateWorkspace = value;
+                },
+                onCreateToolProfileChange: (value: string) => {
+                  state.agentCreateToolProfile = value;
+                },
+                onCreateEmojiChange: (value: string) => {
+                  state.agentCreateEmoji = value;
+                },
+                onCreateSubmit: async () => {
+                  if (!state.agentCreateName.trim()) {
+                    state.agentCreateError = "Agent name is required";
+                    return;
+                  }
+                  state.agentCreateBusy = true;
+                  state.agentCreateError = null;
+                  try {
+                    const client = state.client;
+                    if (!client) {
+                      throw new Error("Not connected to gateway");
+                    }
+                    const config = {
+                      id: state.agentCreateName.trim(),
+                      identity: {
+                        name: state.agentCreateName.trim(),
+                        emoji: state.agentCreateEmoji.trim() || undefined,
+                      },
+                      workspace: state.agentCreateWorkspace.trim() || undefined,
+                      tools: {
+                        profile: state.agentCreateToolProfile as
+                          | "minimal"
+                          | "coding"
+                          | "messaging"
+                          | "full",
+                      },
+                    };
+                    await client.call("agents.create", config);
+                    state.agentCreateOpen = false;
+                    state.agentCreateName = "";
+                    state.agentCreateWorkspace = "";
+                    state.agentCreateToolProfile = "full";
+                    state.agentCreateEmoji = "🤖";
+                    await loadAgents(state);
+                  } catch (err) {
+                    state.agentCreateError = String(err);
+                  } finally {
+                    state.agentCreateBusy = false;
+                  }
+                },
               })
             : nothing
         }
