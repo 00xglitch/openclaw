@@ -30,6 +30,13 @@ import {
 
 export type AgentsPanel = "overview" | "files" | "tools" | "skills" | "channels" | "cron";
 
+const PROFILE_OPTIONS = [
+  { id: "minimal", label: "Minimal", description: "Basic tools only" },
+  { id: "coding", label: "Coding", description: "Code editing and git tools" },
+  { id: "messaging", label: "Messaging", description: "Communication channels" },
+  { id: "full", label: "Full", description: "All available tools" },
+] as const;
+
 export type AgentsProps = {
   loading: boolean;
   error: string | null;
@@ -63,8 +70,22 @@ export type AgentsProps = {
   agentSkillsError: string | null;
   agentSkillsAgentId: string | null;
   skillsFilter: string;
+  createOpen: boolean;
+  createName: string;
+  createWorkspace: string;
+  createToolProfile: string;
+  createEmoji: string;
+  createBusy: boolean;
+  createError: string | null;
   onRefresh: () => void;
   onSelectAgent: (agentId: string) => void;
+  onCreateOpen: () => void;
+  onCreateClose: () => void;
+  onCreateNameChange: (value: string) => void;
+  onCreateWorkspaceChange: (value: string) => void;
+  onCreateToolProfileChange: (value: string) => void;
+  onCreateEmojiChange: (value: string) => void;
+  onCreateSubmit: () => void;
   onSelectPanel: (panel: AgentsPanel) => void;
   onLoadFiles: (agentId: string) => void;
   onSelectFile: (name: string) => void;
@@ -111,9 +132,14 @@ export function renderAgents(props: AgentsProps) {
             <div class="card-title">Agents</div>
             <div class="card-sub">${agents.length} configured.</div>
           </div>
-          <button class="btn btn--sm" ?disabled=${props.loading} @click=${props.onRefresh}>
-            ${props.loading ? "Loading…" : "Refresh"}
-          </button>
+          <div style="display: flex; gap: 8px;">
+            <button class="btn btn--sm primary" @click=${props.onCreateOpen}>
+              New Agent
+            </button>
+            <button class="btn btn--sm" ?disabled=${props.loading} @click=${props.onRefresh}>
+              ${props.loading ? "Loading…" : "Refresh"}
+            </button>
+          </div>
         </div>
         ${
           props.error
@@ -281,6 +307,103 @@ export function renderAgents(props: AgentsProps) {
               `
         }
       </section>
+      ${renderCreateAgentModal(props)}
+    </div>
+  `;
+}
+
+function renderCreateAgentModal(props: AgentsProps) {
+  if (!props.createOpen) {
+    return nothing;
+  }
+
+  return html`
+    <div class="exec-approval-overlay" role="dialog" aria-modal="true" aria-live="polite">
+      <div class="exec-approval-card" style="max-width: 500px;">
+        <div class="exec-approval-header">
+          <div>
+            <div class="exec-approval-title">Create New Agent</div>
+            <div class="exec-approval-sub">Configure a new OpenClaw agent</div>
+          </div>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 16px; margin-top: 16px;">
+          <label class="field">
+            <span>Agent Name</span>
+            <input
+              type="text"
+              placeholder="my-agent"
+              .value=${props.createName}
+              ?disabled=${props.createBusy}
+              @input=${(e: Event) => props.onCreateNameChange((e.target as HTMLInputElement).value)}
+            />
+          </label>
+
+          <label class="field">
+            <span>Emoji</span>
+            <input
+              type="text"
+              placeholder="🤖"
+              .value=${props.createEmoji}
+              ?disabled=${props.createBusy}
+              @input=${(e: Event) => props.onCreateEmojiChange((e.target as HTMLInputElement).value)}
+            />
+          </label>
+
+          <label class="field">
+            <span>Workspace Path</span>
+            <input
+              type="text"
+              placeholder="/path/to/workspace"
+              .value=${props.createWorkspace}
+              ?disabled=${props.createBusy}
+              @input=${(e: Event) => props.onCreateWorkspaceChange((e.target as HTMLInputElement).value)}
+            />
+          </label>
+
+          <label class="field">
+            <span>Tool Profile</span>
+            <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px;">
+              ${PROFILE_OPTIONS.map(
+                (opt) => html`
+                  <button
+                    type="button"
+                    class="btn btn--sm ${props.createToolProfile === opt.id ? "primary" : ""}"
+                    ?disabled=${props.createBusy}
+                    @click=${() => props.onCreateToolProfileChange(opt.id)}
+                    title=${opt.description}
+                  >
+                    ${opt.label}
+                  </button>
+                `,
+              )}
+            </div>
+          </label>
+        </div>
+
+        ${
+          props.createError
+            ? html`<div class="callout danger" style="margin-top: 12px;">${props.createError}</div>`
+            : nothing
+        }
+
+        <div class="exec-approval-actions" style="margin-top: 20px;">
+          <button
+            class="btn primary"
+            ?disabled=${props.createBusy || !props.createName}
+            @click=${props.onCreateSubmit}
+          >
+            ${props.createBusy ? "Creating..." : "Create Agent"}
+          </button>
+          <button
+            class="btn"
+            ?disabled=${props.createBusy}
+            @click=${props.onCreateClose}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
     </div>
   `;
 }
