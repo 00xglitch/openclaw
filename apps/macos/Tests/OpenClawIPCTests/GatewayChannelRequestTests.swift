@@ -52,10 +52,6 @@ import Testing
             }
         }
 
-        func sendPing(pongReceiveHandler: @escaping @Sendable (Error?) -> Void) {
-            pongReceiveHandler(nil)
-        }
-
         func receive() async throws -> URLSessionWebSocketTask.Message {
             let id = self.connectRequestID.withLock { $0 } ?? "connect"
             return .data(GatewayWebSocketTestSupport.connectOkData(id: id))
