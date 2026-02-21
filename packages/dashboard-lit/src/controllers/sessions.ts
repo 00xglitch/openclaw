@@ -15,11 +15,10 @@ export type SessionsListResult = {
 
 export async function loadSessions(
   request: GatewayRequest,
-  opts?: { limit?: number; offset?: number },
+  opts?: { limit?: number },
 ): Promise<SessionsListResult> {
   const result = await request<SessionsListResult>("sessions.list", {
     limit: opts?.limit ?? 50,
-    offset: opts?.offset ?? 0,
   });
   return result ?? { count: 0, sessions: [] };
 }

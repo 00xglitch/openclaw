@@ -1,6 +1,6 @@
 import { LitElement, html } from "lit";
 import { customElement, state } from "lit/decorators.js";
-import { icon } from "./components/icons.js";
+import { icon, type IconName } from "./components/icons.js";
 import "./components/connection-status.js";
 import {
   normalizeBasePath,
@@ -23,6 +23,13 @@ declare global {
 
 type ThemeMode = "landingTheme" | "light" | "docsTheme";
 const THEME_KEY = "openclaw.dashboard.theme";
+
+type ThemeOption = { id: ThemeMode; label: string; icon: string };
+const THEME_OPTIONS: ThemeOption[] = [
+  { id: "landingTheme", label: "Landing theme", icon: "layoutGrid" },
+  { id: "light", label: "Light theme", icon: "sun" },
+  { id: "docsTheme", label: "Docs theme", icon: "moon" },
+];
 const NAV_COLLAPSED_KEY = "openclaw.dashboard.navCollapsed";
 
 function resolveBasePath(): string {
@@ -50,6 +57,9 @@ export class DashboardApp extends LitElement {
   @state() basePath = "";
   @state() theme: ThemeMode = "docsTheme";
   @state() navCollapsed = false;
+  /** Button order — only updates when the toggle collapses, so the active
+   *  button doesn't jump while the picker is still open. */
+  @state() private themeOrder: ThemeMode[] = ["docsTheme", "landingTheme", "light"];
 
   /* ── Lifecycle ───────────────────────────────────── */
 
@@ -130,6 +140,7 @@ export class DashboardApp extends LitElement {
     } else {
       this.theme = "docsTheme";
     }
+    this.themeOrder = this.buildThemeOrder(this.theme);
     this.applyTheme(this.theme);
   }
 
@@ -137,7 +148,23 @@ export class DashboardApp extends LitElement {
     this.theme = next;
     localStorage.setItem(THEME_KEY, next);
     this.applyTheme(next);
+    // Don't update themeOrder here — wait until the toggle collapses
   }
+
+  /** Reorder: active first, then the rest in their natural order. */
+  private buildThemeOrder(active: ThemeMode): ThemeMode[] {
+    const rest = THEME_OPTIONS.map((o) => o.id).filter((id) => id !== active);
+    return [active, ...rest];
+  }
+
+  /** Called when the theme toggle loses hover/focus (collapses).
+   *  Reorders buttons so the active one is in the visible slot. */
+  private handleThemeToggleCollapse = (): void => {
+    // Small delay so the collapse animation starts before reorder
+    setTimeout(() => {
+      this.themeOrder = this.buildThemeOrder(this.theme);
+    }, 80);
+  };
 
   private applyTheme(theme: ThemeMode): void {
     document.documentElement.setAttribute("data-theme", theme);
@@ -176,31 +203,32 @@ export class DashboardApp extends LitElement {
             </div>
             <div class="topbar-status">
               <connection-status></connection-status>
-              <div class="theme-toggle">
-                <button
-                  class="theme-btn ${this.theme === "landingTheme" ? "active" : ""}"
-                  @click=${() => this.setTheme("landingTheme")}
-                  aria-pressed=${this.theme === "landingTheme"}
-                  title="Landing theme"
-                >
-                  ${icon("layoutGrid", { className: "icon-xs" })}
-                </button>
-                <button
-                  class="theme-btn ${this.theme === "light" ? "active" : ""}"
-                  @click=${() => this.setTheme("light")}
-                  aria-pressed=${this.theme === "light"}
-                  title="Light theme"
-                >
-                  ${icon("sun", { className: "icon-xs" })}
-                </button>
-                <button
-                  class="theme-btn ${this.theme === "docsTheme" ? "active" : ""}"
-                  @click=${() => this.setTheme("docsTheme")}
-                  aria-pressed=${this.theme === "docsTheme"}
-                  title="Docs theme"
-                >
-                  ${icon("moon", { className: "icon-xs" })}
-                </button>
+              <div
+                class="theme-toggle"
+                @mouseleave=${this.handleThemeToggleCollapse}
+                @focusout=${(e: FocusEvent) => {
+                  const toggle = e.currentTarget as HTMLElement;
+                  // Only collapse if focus left the toggle entirely
+                  requestAnimationFrame(() => {
+                    if (!toggle.contains(document.activeElement)) {
+                      this.handleThemeToggleCollapse();
+                    }
+                  });
+                }}
+              >
+                ${this.themeOrder.map((id) => {
+                  const opt = THEME_OPTIONS.find((o) => o.id === id)!;
+                  return html`
+                    <button
+                      class="theme-btn ${this.theme === id ? "active" : ""}"
+                      @click=${() => this.setTheme(id)}
+                      aria-pressed=${this.theme === id}
+                      title=${opt.label}
+                    >
+                      ${icon(opt.icon as IconName, { className: "icon-xs" })}
+                    </button>
+                  `;
+                })}
               </div>
             </div>
           </header>
