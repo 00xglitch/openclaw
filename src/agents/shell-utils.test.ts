@@ -83,6 +83,10 @@ describe("resolveShellFromPath", () => {
     envSnapshot = captureEnv(["PATH"]);
   });
 
+  beforeEach(() => {
+    envSnapshot = captureEnv(["PATH"]);
+  });
+
   afterEach(() => {
     envSnapshot.restore();
     for (const dir of tempDirs.splice(0)) {
