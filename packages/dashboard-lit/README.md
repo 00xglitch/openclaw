@@ -16,7 +16,7 @@ In the **Connection** panel:
 
 - Gateway URL defaults to `ws://127.0.0.1:18789`
 - Paste your gateway shared secret (token/password)
-- Click **Save & reconnect**
+- Click **Connect**
 - If auto-reconnect fails repeatedly, use **Connect now** to force an immediate retry
 
 If you see `unauthorized: gateway password mismatch`:
