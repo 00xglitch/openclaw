@@ -1743,25 +1743,56 @@
     });
   });
 
-  // Sidebar toggle
+  // Sidebar state (desktop collapse + mobile off-canvas)
   const sidebar = document.getElementById("sidebar");
   const overlay = document.getElementById("sidebar-overlay");
-  const hamburger = document.getElementById("hamburger");
+  const sidebarToggle = document.getElementById("sidebar-toggle");
+  const sidebarClose = document.getElementById("sidebar-close");
+  const mobileQuery = window.matchMedia("(max-width: 900px)");
 
-  hamburger.addEventListener("click", () => {
-    sidebar.classList.add("open");
-    overlay.classList.add("open");
-    hamburger.style.display = "none";
-  });
+  let isMobileSidebarOpen = true;
+  let isDesktopSidebarExpanded = true;
 
-  const closeSidebar = () => {
-    sidebar.classList.remove("open");
-    overlay.classList.remove("open");
-    hamburger.style.display = "";
+  const syncSidebarStateToDom = () => {
+    const isMobile = mobileQuery.matches;
+    const sidebarIsOpen = isMobile ? isMobileSidebarOpen : isDesktopSidebarExpanded;
+
+    sidebar.classList.toggle("open", sidebarIsOpen);
+    sidebar.classList.toggle("collapsed", !isMobile && !isDesktopSidebarExpanded);
+    overlay.classList.toggle("open", isMobile && isMobileSidebarOpen);
+
+    sidebarToggle.setAttribute("aria-expanded", String(sidebarIsOpen));
+    sidebarToggle.setAttribute(
+      "aria-label",
+      sidebarIsOpen ? "Collapse sidebar" : "Expand sidebar",
+    );
+    sidebarToggle.title = sidebarIsOpen ? "Collapse sidebar" : "Expand sidebar";
+    overlay.setAttribute("aria-hidden", String(!(isMobile && isMobileSidebarOpen)));
   };
 
+  const toggleSidebar = () => {
+    if (mobileQuery.matches) {
+      isMobileSidebarOpen = !isMobileSidebarOpen;
+    } else {
+      isDesktopSidebarExpanded = !isDesktopSidebarExpanded;
+    }
+    syncSidebarStateToDom();
+  };
+
+  const closeSidebar = () => {
+    if (mobileQuery.matches) {
+      isMobileSidebarOpen = false;
+    } else {
+      isDesktopSidebarExpanded = false;
+    }
+    syncSidebarStateToDom();
+  };
+
+  sidebarToggle.addEventListener("click", toggleSidebar);
   overlay.addEventListener("click", closeSidebar);
-  document.getElementById("sidebar-close").addEventListener("click", closeSidebar);
+  sidebarClose.addEventListener("click", closeSidebar);
+  mobileQuery.addEventListener("change", syncSidebarStateToDom);
+  syncSidebarStateToDom();
 
   // Toggle states
   let thinkingExpanded = true;
@@ -1790,9 +1821,17 @@
   // Keyboard shortcuts
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
+      // On mobile, Escape dismisses the off-canvas sidebar first.
+      if (mobileQuery.matches && isMobileSidebarOpen) {
+        e.preventDefault();
+        closeSidebar();
+        return;
+      }
+
       searchInput.value = "";
       searchQuery = "";
       navigateTo(leafId, "bottom");
+      return;
     }
     if (e.ctrlKey && e.key === "t") {
       e.preventDefault();
