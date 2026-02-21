@@ -29,6 +29,15 @@ const makeMsg = (overrides: Partial<WebInboundMsg>): WebInboundMsg =>
     ...overrides,
   }) as WebInboundMsg;
 
+async function withTempDir<T>(prefix: string, run: (dir: string) => Promise<T>): Promise<T> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
+  try {
+    return await run(dir);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+}
+
 describe("isBotMentionedFromTargets", () => {
   const mentionCfg = { mentionRegexes: [/\bopenclaw\b/i] };
 
@@ -95,6 +104,16 @@ describe("isBotMentionedFromTargets", () => {
       selfJid: "15551234567@s.whatsapp.net",
     });
     expectMentioned(msg, { mentionRegexes: [] }, true);
+  });
+
+  it("matches fallback number mentions when regexes do not match", () => {
+    const msg = makeMsg({
+      body: "please check +1 555 123 4567",
+      selfE164: "+15551234567",
+      selfJid: "15551234567@s.whatsapp.net",
+    });
+    const targets = resolveMentionTargets(msg);
+    expect(isBotMentionedFromTargets(msg, { mentionRegexes: [] }, targets)).toBe(true);
   });
 });
 
