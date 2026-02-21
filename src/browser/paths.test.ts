@@ -246,3 +246,56 @@ describe("resolvePathsWithinRoot", () => {
     }
   });
 });
+
+describe("resolvePathWithinRoot", () => {
+  it("uses default file name when requested path is blank", () => {
+    const result = resolvePathWithinRoot({
+      rootDir: "/tmp/uploads",
+      requestedPath: " ",
+      scopeLabel: "uploads directory",
+      defaultFileName: "fallback.txt",
+    });
+    expect(result).toEqual({
+      ok: true,
+      path: path.resolve("/tmp/uploads", "fallback.txt"),
+    });
+  });
+
+  it("rejects root-level path aliases that do not point to a file", () => {
+    const result = resolvePathWithinRoot({
+      rootDir: "/tmp/uploads",
+      requestedPath: ".",
+      scopeLabel: "uploads directory",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain("must stay within uploads directory");
+    }
+  });
+});
+
+describe("resolvePathsWithinRoot", () => {
+  it("resolves all valid in-root paths", () => {
+    const result = resolvePathsWithinRoot({
+      rootDir: "/tmp/uploads",
+      requestedPaths: ["a.txt", "nested/b.txt"],
+      scopeLabel: "uploads directory",
+    });
+    expect(result).toEqual({
+      ok: true,
+      paths: [path.resolve("/tmp/uploads", "a.txt"), path.resolve("/tmp/uploads", "nested/b.txt")],
+    });
+  });
+
+  it("returns the first path validation error", () => {
+    const result = resolvePathsWithinRoot({
+      rootDir: "/tmp/uploads",
+      requestedPaths: ["a.txt", "../outside.txt", "b.txt"],
+      scopeLabel: "uploads directory",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain("must stay within uploads directory");
+    }
+  });
+});
