@@ -16,6 +16,10 @@ async function withCameraTempDir<T>(run: (dir: string) => Promise<T>): Promise<T
   return await withTempDir("openclaw-test-", run);
 }
 
+async function withCameraTempDir<T>(run: (dir: string) => Promise<T>): Promise<T> {
+  return await withTempDir("openclaw-test-", run);
+}
+
 describe("nodes camera helpers", () => {
   function stubFetchResponse(response: Response) {
     vi.stubGlobal(
@@ -175,6 +179,24 @@ describe("nodes camera helpers", () => {
         testCase.expectedMessage,
       );
     }
+  });
+
+  it("removes partially written file when url stream fails", async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("partial"));
+        controller.error(new Error("stream exploded"));
+      },
+    });
+    stubFetchResponse(new Response(stream, { status: 200 }));
+
+    await withCameraTempDir(async (dir) => {
+      const out = path.join(dir, "broken.bin");
+      await expect(writeUrlToFile(out, "https://example.com/broken.bin")).rejects.toThrow(
+        /stream exploded/i,
+      );
+      await expect(fs.stat(out)).rejects.toThrow();
+    });
   });
 
   it("removes partially written file when url stream fails", async () => {
