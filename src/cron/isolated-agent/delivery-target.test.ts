@@ -291,4 +291,44 @@ describe("resolveDeliveryTarget", () => {
     expect(result.to).toBe("987654");
     expect(result.error).toBeUndefined();
   });
+
+  it("uses sessionKey thread entry before main session entry", async () => {
+    vi.mocked(loadSessionStore).mockReturnValue({
+      "agent:test:main": {
+        sessionId: "main-session",
+        updatedAt: 1000,
+        lastChannel: "telegram",
+        lastTo: "main-chat",
+      },
+      "agent:test:thread:42": {
+        sessionId: "thread-session",
+        updatedAt: 2000,
+        lastChannel: "telegram",
+        lastTo: "thread-chat",
+      },
+    } as SessionStore);
+
+    const result = await resolveDeliveryTarget(makeCfg({ bindings: [] }), AGENT_ID, {
+      channel: "last",
+      sessionKey: "agent:test:thread:42",
+      to: undefined,
+    });
+
+    expect(result.channel).toBe("telegram");
+    expect(result.to).toBe("thread-chat");
+  });
+
+  it("uses channel selection result when no previous session target exists", async () => {
+    setMainSessionEntry(undefined);
+    vi.mocked(resolveMessageChannelSelection).mockResolvedValueOnce({ channel: "telegram" });
+
+    const result = await resolveForAgent({
+      cfg: makeCfg({ bindings: [] }),
+      target: { channel: "last", to: undefined },
+    });
+
+    expect(result.channel).toBe("telegram");
+    expect(result.to).toBeUndefined();
+    expect(result.mode).toBe("implicit");
+  });
 });
