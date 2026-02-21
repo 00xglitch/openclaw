@@ -9,6 +9,8 @@ vi.doUnmock("./doctor-sandbox.js");
 
 let doctorCommand: typeof import("./doctor.js").doctorCommand;
 
+let doctorCommand: typeof import("./doctor.js").doctorCommand;
+
 describe("doctor command", () => {
   beforeAll(async () => {
     ({ doctorCommand } = await import("./doctor.js"));
