@@ -20,6 +20,15 @@ import {
   setVoiceWakeTriggers,
 } from "./voicewake.js";
 
+async function withTempDir(prefix: string, run: (dir: string) => Promise<void>) {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
+  try {
+    await run(dir);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+}
+
 describe("infra store", () => {
   describe("state migrations fs", () => {
     it("treats array session stores as invalid", async () => {
