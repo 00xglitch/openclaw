@@ -30,7 +30,9 @@ If you see `unauthorized: gateway password mismatch`:
 ```bash
 openclaw config set gateway.controlUi.dangerouslyDisableDeviceAuth false
 openclaw config set gateway.controlUi.allowInsecureAuth false
-openclaw config set gateway.tailscale.mode serve
+openclaw config set gateway.auth.mode password
+openclaw config set gateway.auth.password
+openclaw config set gateway.tailscale.mode funnel
 openclaw config set gateway.controlUi.allowedOrigins '["http://localhost:5174","http://127.0.0.1:5174"]'
 openclaw gateway restart
 ```
