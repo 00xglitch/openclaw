@@ -231,12 +231,12 @@ services:
     environment:
       HOME: /home/node
       TERM: xterm-256color
-      # Service URLs (overlay network DNS)
-      ZEP_API_URL: http://zep:8000
-      OLLAMA_HOST: http://ollama:11434
-      OLLAMA_BASE_URL: http://ollama:11434/v1
-      QDRANT_URL: http://qdrant:6333
-      OPENAI_BASE_URL: http://ollama:11434/v1
+      # Service URLs (tasks.* DNS bypasses broken IPVS VIP routing)
+      ZEP_API_URL: http://tasks.zep:8000
+      OLLAMA_HOST: http://tasks.ollama:11434
+      OLLAMA_BASE_URL: http://tasks.ollama:11434/v1
+      QDRANT_URL: http://tasks.qdrant:6333
+      OPENAI_BASE_URL: http://tasks.ollama:11434/v1
       OPENAI_API_KEY: ollama
       # Chatterbox TTS runs bare metal on host (GPU-accelerated)
       OPENAI_TTS_BASE_URL: http://host.docker.internal:4123/v1
@@ -399,7 +399,7 @@ services:
         - "traefik.http.routers.grafana.rule=Host(`grafana.glitch.lan`)"
         - "traefik.http.routers.grafana.entrypoints=websecure"
         - "traefik.http.routers.grafana.tls=true"
-        - "traefik.http.routers.grafana.middlewares=secure-headers,ts-lan-only,compress"
+        - "traefik.http.routers.grafana.middlewares=basic-auth,secure-headers,ts-lan-only,compress"
         - "traefik.http.services.grafana.loadbalancer.server.port=3000"
       resources:
         limits:
@@ -439,11 +439,12 @@ services:
     secrets:
       - source: redis_password
         target: redis_password
-    environment:
-      REDIS_ADDR: redis:6379
+    configs:
+      - source: redis_exporter_passwords
+        target: /etc/redis-passwords.json
     command:
-      - "--redis.addr=redis:6379"
-      - "--redis.password=EWIHsLSbm07IRLrYQHp1pdJGAPh0x7H9"
+      - "--redis.addr=tasks.redis:6379"
+      - "--redis.password-file=/etc/redis-passwords.json"
     deploy:
       mode: replicated
       replicas: 1
@@ -529,7 +530,7 @@ services:
     networks:
       - openclaw-monitoring
     environment:
-      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+      ELASTICSEARCH_HOSTS: http://tasks.elasticsearch:9200
       XPACK_SECURITY_ENABLED: "false"
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:5601/api/status || exit 1"]
@@ -574,7 +575,7 @@ services:
         - "traefik.http.routers.portainer.rule=Host(`portainer.glitch.lan`)"
         - "traefik.http.routers.portainer.entrypoints=websecure"
         - "traefik.http.routers.portainer.tls=true"
-        - "traefik.http.routers.portainer.middlewares=secure-headers,ts-lan-only,compress"
+        - "traefik.http.routers.portainer.middlewares=basic-auth,secure-headers,ts-lan-only,compress"
         - "traefik.http.services.portainer.loadbalancer.server.port=9000"
       placement:
         constraints:
@@ -617,7 +618,7 @@ services:
         - "traefik.http.routers.uptime.rule=Host(`uptime.glitch.lan`)"
         - "traefik.http.routers.uptime.entrypoints=websecure"
         - "traefik.http.routers.uptime.tls=true"
-        - "traefik.http.routers.uptime.middlewares=secure-headers,ts-lan-only,compress"
+        - "traefik.http.routers.uptime.middlewares=basic-auth,secure-headers,ts-lan-only,compress"
         - "traefik.http.services.uptime.loadbalancer.server.port=3001"
       resources:
         limits:
@@ -642,7 +643,7 @@ services:
         target: /app/configs
         read_only: true
     environment:
-      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_BASE_URL: http://tasks.ollama:11434
     deploy:
       mode: replicated
       replicas: 1
@@ -702,7 +703,7 @@ services:
         # Basic auth middleware (shared by all protected services)
         - "traefik.http.middlewares.basic-auth.basicauth.usersfile=/run/secrets/traefik_basic_auth"
         # IP allowlist — Tailscale + LAN only
-        - "traefik.http.middlewares.ts-lan-only.ipallowlist.sourcerange=100.64.0.0/10,192.168.178.0/24,172.16.0.0/12,127.0.0.1/8"
+        - "traefik.http.middlewares.ts-lan-only.ipallowlist.sourcerange=100.64.0.0/10,192.168.178.0/24,172.16.0.0/12,127.0.0.1/8" # allow-private-ip
         # Security headers
         - "traefik.http.middlewares.secure-headers.headers.stsSeconds=31536000"
         - "traefik.http.middlewares.secure-headers.headers.stsIncludeSubdomains=true"
@@ -798,7 +799,7 @@ secrets:
 
 configs:
   zep_config:
-    name: zep_config_v1
+    name: zep_config_v2
     external: true
   zep_entrypoint:
     name: zep_entrypoint_v1
@@ -841,4 +842,7 @@ configs:
     external: true
   traefik_dynamic_transports:
     name: traefik_dynamic_transports_v1
+    external: true
+  redis_exporter_passwords:
+    name: redis_exporter_passwords_v1
     external: true
