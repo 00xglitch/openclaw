@@ -40,41 +40,121 @@ type ChatEventPayload = {
   errorMessage?: string;
 };
 
-const DUTY_PROMPTS: Record<string, string> = {
-  "Answer questions": "What can you help me with?",
-  "Brainstorm ideas": "Help me brainstorm.",
-  "Draft content": "Draft a blog post.",
-  "Explain concepts": "Explain how something works.",
-  "Write code": "Write a function that...",
-  "Debug issues": "Help me debug this error:",
-  "Review pull requests": "Review this code change:",
-  "Explain architecture": "Explain the architecture of...",
-  "Research topics": "Research the latest on...",
-  "Analyze data": "Analyze this data set:",
-  "Summarize findings": "Summarize the key findings from...",
-  "Compare alternatives": "Compare these options:",
-  "Design agent profiles": "Design an agent for...",
-  "Configure tools": "Set up tools for...",
-  "Execute task lists": "Run these tasks:",
-  "Monitor progress": "What's the status of...",
-  "Analyze conversations": "Analyze our recent conversations",
-  "Identify patterns": "What patterns do you notice?",
-  "Write copy": "Write marketing copy for...",
-  "Plan campaigns": "Plan a campaign for...",
-  "Review tone": "Review the tone of this content:",
-  "Check brand alignment": "Does this align with our brand?",
+type StarterCard = { label: string; prompt: string; icon: string };
+
+/** Quick-send starters keyed by agent duty. Each sends immediately on click. */
+const DUTY_STARTERS: Record<string, StarterCard> = {
+  "Answer questions": {
+    label: "What can you do?",
+    prompt: "What can you help me with? Give me a quick overview of your capabilities.",
+    icon: "💬",
+  },
+  "Brainstorm ideas": {
+    label: "Brainstorm",
+    prompt: "Help me brainstorm ideas — ask me what topic to explore.",
+    icon: "💡",
+  },
+  "Draft content": {
+    label: "Draft something",
+    prompt: "Help me draft content — ask what I need written.",
+    icon: "✏️",
+  },
+  "Explain concepts": {
+    label: "Explain a concept",
+    prompt: "I'd like you to explain a concept — ask me what to explain.",
+    icon: "🎓",
+  },
+  "Write code": {
+    label: "Write code",
+    prompt: "Help me write code — ask what I need built.",
+    icon: "🔧",
+  },
+  "Debug issues": {
+    label: "Debug an issue",
+    prompt: "Help me debug — ask me to describe the error.",
+    icon: "🐛",
+  },
+  "Review pull requests": {
+    label: "Code review",
+    prompt: "Help me review code — ask me to share the diff.",
+    icon: "👀",
+  },
+  "Explain architecture": {
+    label: "Explain architecture",
+    prompt: "Walk me through an architecture — ask what system to explain.",
+    icon: "🏗️",
+  },
+  "Research topics": {
+    label: "Research",
+    prompt: "Help me research a topic — ask what I'm looking into.",
+    icon: "🔍",
+  },
+  "Analyze data": {
+    label: "Analyze data",
+    prompt: "Help me analyze data — ask me to share the dataset.",
+    icon: "📊",
+  },
+  "Summarize findings": {
+    label: "Summarize",
+    prompt: "Help me summarize — ask what I need condensed.",
+    icon: "📋",
+  },
+  "Compare alternatives": {
+    label: "Compare options",
+    prompt: "Help me compare alternatives — ask what I'm deciding between.",
+    icon: "⚖️",
+  },
+  "Design agent profiles": {
+    label: "Design an agent",
+    prompt: "Help me design a new agent profile — ask about the use case.",
+    icon: "🤖",
+  },
+  "Configure tools": {
+    label: "Configure tools",
+    prompt: "Help me set up tools — ask which tools I need.",
+    icon: "⚙️",
+  },
+  "Execute task lists": {
+    label: "Run tasks",
+    prompt: "Help me execute a task list — ask what needs doing.",
+    icon: "📝",
+  },
+  "Monitor progress": {
+    label: "Check status",
+    prompt: "What's the current status? Give me a quick update.",
+    icon: "📡",
+  },
+  "Analyze conversations": {
+    label: "Analyze conversations",
+    prompt: "Analyze our recent conversations and surface key themes.",
+    icon: "🔎",
+  },
+  "Identify patterns": {
+    label: "Find patterns",
+    prompt: "What patterns do you notice across our recent work?",
+    icon: "🧩",
+  },
+  "Write copy": {
+    label: "Write copy",
+    prompt: "Help me write copy — ask what it's for.",
+    icon: "✍️",
+  },
+  "Plan campaigns": {
+    label: "Plan a campaign",
+    prompt: "Help me plan a campaign — ask about the goal.",
+    icon: "📣",
+  },
+  "Review tone": {
+    label: "Review tone",
+    prompt: "Help me review tone — ask me to share the content.",
+    icon: "🎭",
+  },
+  "Check brand alignment": {
+    label: "Brand check",
+    prompt: "Help me check brand alignment — ask what to review.",
+    icon: "🎯",
+  },
 };
-
-const OUTLINE_SECTIONS =
-  "\n\n**Goal:** \n**Context / background:** \n**Key questions to cover:** \n**Scope or constraints:** \n**What I need at the end:**";
-
-function getOutlineTemplate(duty: string): string {
-  const prompt = DUTY_PROMPTS[duty];
-  if (!prompt) {
-    return "";
-  }
-  return prompt + OUTLINE_SECTIONS;
-}
 
 const SAFETY_TIMEOUT_MS = 60_000;
 
@@ -121,9 +201,7 @@ export class AgentChat extends LitElement {
   // Scroll
   @state() private showScrollPill = false;
 
-  // Duty outline expansion (empty state)
-  @state() private expandedDuty: string | null = null;
-  @state() private outlineDraft = "";
+  // (starter cards send immediately — no expansion state needed)
 
   private prevEventSeq = -1;
   private scrollEl: HTMLElement | null = null;
@@ -140,15 +218,15 @@ export class AgentChat extends LitElement {
     return this.agent?.id ?? "agent:main:main";
   }
 
-  private get suggestedDuties(): { duty: string; prompt: string }[] {
+  private get suggestedStarters(): StarterCard[] {
     if (!this.agent?.duties) {
       return [];
     }
-    const out: { duty: string; prompt: string }[] = [];
+    const out: StarterCard[] = [];
     for (const duty of this.agent.duties) {
-      const prompt = DUTY_PROMPTS[duty];
-      if (prompt && out.length < 4) {
-        out.push({ duty, prompt });
+      const card = DUTY_STARTERS[duty];
+      if (card && out.length < 4) {
+        out.push(card);
       }
     }
     return out;
@@ -403,33 +481,13 @@ export class AgentChat extends LitElement {
     void this.onSend("/compact");
   }
 
-  /* ── Duty outline (empty state) ────────────────────── */
+  /* ── Starter cards (empty state) ─────────────────────── */
 
-  private expandDuty(duty: string): void {
-    const template = getOutlineTemplate(duty);
-    if (!template) {
-      const prompt = DUTY_PROMPTS[duty];
-      if (prompt) {
-        void this.onSend(prompt);
-      }
+  private sendStarter(card: StarterCard): void {
+    if (this.submitting || !this.gateway?.connected) {
       return;
     }
-    this.expandedDuty = duty;
-    this.outlineDraft = template;
-  }
-
-  private collapseDuty(): void {
-    this.expandedDuty = null;
-    this.outlineDraft = "";
-  }
-
-  private startDiscussionFromOutline(): void {
-    const trimmed = this.outlineDraft.trim();
-    if (!trimmed || this.submitting || !this.gateway?.connected) {
-      return;
-    }
-    this.collapseDuty();
-    void this.onSend(trimmed);
+    void this.onSend(card.prompt);
   }
 
   /* ── Input handling ────────────────────────────────── */
@@ -1102,14 +1160,13 @@ export class AgentChat extends LitElement {
     }
 
     const mt = modelTag(this.agent.model);
-    const duties = this.suggestedDuties;
-    const expanded = this.expandedDuty;
+    const starters = this.suggestedStarters;
 
     return html`
       <div class="agent-chat__welcome">
-        <agent-avatar .agent=${this.agent} .size=${64}></agent-avatar>
+        <agent-avatar .agent=${this.agent} .size=${56}></agent-avatar>
         <h2>${this.agent.name}</h2>
-        <p class="agent-chat__personality">${this.agent.personality}</p>
+        ${this.agent.personality ? html`<p class="agent-chat__personality">${this.agent.personality}</p>` : nothing}
 
         <div class="agent-chat__badges">
           ${this.agent.tools.length ? html`<span class="agent-chat__badge">${icon("zap", { className: "icon-xs" })} ${this.agent.tools.length} tools</span>` : nothing}
@@ -1117,16 +1174,19 @@ export class AgentChat extends LitElement {
         </div>
 
         ${
-          duties.length > 0 && !expanded
+          starters.length > 0
             ? html`
-              <div class="agent-chat__prompts">
-                ${duties.map(
-                  (item) => html`
+              <div class="agent-chat__starters">
+                ${starters.map(
+                  (card) => html`
                     <button
-                      class="agent-chat__prompt-card"
-                      @click=${() => this.expandDuty(item.duty)}
+                      class="agent-chat__starter"
+                      @click=${() => this.sendStarter(card)}
+                      ?disabled=${this.submitting || !this.gateway?.connected}
                     >
-                      ${item.prompt}
+                      <span class="agent-chat__starter-icon">${card.icon}</span>
+                      <span class="agent-chat__starter-label">${card.label}</span>
+                      <span class="agent-chat__starter-arrow">${icon("send", { className: "icon-xs" })}</span>
                     </button>
                   `,
                 )}
@@ -1135,47 +1195,9 @@ export class AgentChat extends LitElement {
             : nothing
         }
 
-        ${
-          expanded
-            ? html`
-              <div class="agent-chat__outline-panel">
-                <h3 class="agent-chat__outline-title">Structured discussion: ${expanded}</h3>
-                <textarea
-                  class="agent-chat__outline-textarea"
-                  .value=${this.outlineDraft}
-                  @input=${(e: Event) => {
-                    this.outlineDraft = (e.target as HTMLTextAreaElement).value;
-                  }}
-                  rows="10"
-                  placeholder="Edit the outline, then start the discussion."
-                ></textarea>
-                <div class="agent-chat__outline-actions">
-                  <button class="btn-ghost" @click=${() => this.collapseDuty()}>Back</button>
-                  <button
-                    class="chat-send-btn"
-                    @click=${() => this.startDiscussionFromOutline()}
-                    ?disabled=${this.submitting || !this.gateway?.connected || !this.outlineDraft.trim()}
-                    title="Start discussion"
-                  >
-                    ${icon("send")}
-                    <span>Start discussion</span>
-                  </button>
-                </div>
-              </div>
-            `
-            : nothing
-        }
-
-        ${
-          !expanded
-            ? html`
-                <p class="agent-chat__hint">
-                  <kbd>Enter</kbd> to send &middot; <kbd>Shift+Enter</kbd> for newline &middot; <kbd>/</kbd> for
-                  commands
-                </p>
-              `
-            : nothing
-        }
+        <p class="agent-chat__hint">
+          Type a message below or pick a starter &middot; <kbd>/</kbd> for commands
+        </p>
       </div>
     `;
   }
