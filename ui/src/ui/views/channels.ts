@@ -50,6 +50,9 @@ export function renderChannels(props: ChannelsProps) {
       return a.order - b.order;
     });
 
+  const enabledCount = orderedChannels.filter((c) => c.enabled).length;
+  const totalCount = orderedChannels.length;
+
   return html`
     <section class="grid grid-cols-2">
       ${orderedChannels.map((channel) =>
@@ -67,14 +70,16 @@ export function renderChannels(props: ChannelsProps) {
       )}
     </section>
 
-    <section class="card" style="margin-top: 18px;">
-      <div class="row" style="justify-content: space-between;">
-        <div>
-          <div class="card-title">Channel health</div>
-          <div class="card-sub">Channel status snapshots from the gateway.</div>
+    <details class="card" style="margin-top: 18px;">
+      <summary style="cursor: pointer; user-select: none;">
+        <div class="row" style="justify-content: space-between; display: inline-flex; width: calc(100% - 20px);">
+          <div>
+            <span class="card-title" style="font-size: 14px;">Raw health snapshot</span>
+            <span class="muted" style="margin-left: 8px; font-size: 12px;">${enabledCount}/${totalCount} channels active</span>
+          </div>
+          <div class="muted" style="font-size: 12px;">${props.lastSuccessAt ? formatRelativeTimestamp(props.lastSuccessAt) : "n/a"}</div>
         </div>
-        <div class="muted">${props.lastSuccessAt ? formatRelativeTimestamp(props.lastSuccessAt) : "n/a"}</div>
-      </div>
+      </summary>
       ${
         props.lastError
           ? html`<div class="callout danger" style="margin-top: 12px;">
@@ -82,10 +87,10 @@ export function renderChannels(props: ChannelsProps) {
           </div>`
           : nothing
       }
-      <pre class="code-block" style="margin-top: 12px;">
+      <pre class="code-block" style="margin-top: 12px; max-height: 400px; overflow-y: auto;">
 ${props.snapshot ? JSON.stringify(props.snapshot, null, 2) : "No snapshot yet."}
       </pre>
-    </section>
+    </details>
   `;
 }
 
