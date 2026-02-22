@@ -2,9 +2,10 @@ import { consume } from "@lit/context";
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
-import type { BubbleActions } from "../components/chat-bubble.js";
+import { agentColor } from "../components/agent-avatar.js";
 import "../components/agent-avatar.js";
 import "../components/chat-bubble.js";
+import type { BubbleActions } from "../components/chat-bubble.js";
 import { icon } from "../components/icons.js";
 import { gatewayContext, type GatewayState } from "../context/gateway-context.js";
 import {
@@ -1160,9 +1161,12 @@ export class AgentChat extends LitElement {
     const mt = modelTag(this.agent.model);
     const starters = this.suggestedStarters;
 
+    const color = agentColor(this.agent);
+
     return html`
-      <div class="agent-chat__welcome">
-        <agent-avatar .agent=${this.agent} .size=${56}></agent-avatar>
+      <div class="agent-chat__welcome" style="--agent-color:${color}">
+        <div class="agent-chat__welcome-glow"></div>
+        <agent-avatar .agent=${this.agent} .size=${64}></agent-avatar>
         <h2>${this.agent.name}</h2>
         ${this.agent.personality ? html`<p class="agent-chat__personality">${this.agent.personality}</p>` : nothing}
 
