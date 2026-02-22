@@ -731,12 +731,12 @@ export class AgentChat extends LitElement {
       this.syncTextarea();
     };
 
-    recognition.addEventListener("end", () => {
+    (recognition as unknown as EventTarget).addEventListener("end", () => {
       this.voiceActive = false;
       this.recognition = null;
     });
 
-    recognition.addEventListener("error", () => {
+    (recognition as unknown as EventTarget).addEventListener("error", () => {
       this.voiceActive = false;
       this.recognition = null;
     });
@@ -1080,7 +1080,7 @@ export class AgentChat extends LitElement {
             ${
               hasVoice
                 ? html`
-                  <button class="agent-chat__input-btn ${this.voiceActive ? "agent-chat__input-btn--active" : ""}" @click=${() => this.toggleVoice()} title="Voice input">
+                  <button class="agent-chat__input-btn ${this.voiceActive ? "agent-chat__input-btn--recording" : ""}" @click=${() => this.toggleVoice()} title=${this.voiceActive ? "Stop recording" : "Voice input"}>
                     ${icon(this.voiceActive ? "micOff" : "mic", { className: "icon-sm" })}
                   </button>
                 `

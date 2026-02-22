@@ -3,6 +3,8 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { keyed } from "lit/directives/keyed.js";
 import { agentContext } from "../context/agent-context.js";
+import { gatewayContext, type GatewayState } from "../context/gateway-context.js";
+import { loadAgents, type AgentInfo } from "../controllers/agents.js";
 import type { AgentProfile, AgentProfileStore } from "../lib/agent-profiles.js";
 import { icon } from "./icons.js";
 import "./agent-dropdown-switcher.js";
@@ -19,9 +21,63 @@ export class AgentPanel extends LitElement {
   @consume({ context: agentContext, subscribe: true })
   agentStore!: AgentProfileStore;
 
+  @consume({ context: gatewayContext, subscribe: true })
+  gateway!: GatewayState;
+
   @property({ type: String }) mode: "panel" | "fullpage" = "fullpage";
 
   @state() private agentTab: AgentTab = "chat";
+  @state() private gatewayAgents: AgentInfo[] = [];
+  @state() private gatewayDefaultId = "";
+
+  private lastConnectedState: boolean | null = null;
+
+  override updated(): void {
+    const connected = this.gateway?.connected ?? false;
+    if (connected && this.lastConnectedState !== true) {
+      void this.fetchGatewayAgents();
+    }
+    this.lastConnectedState = connected;
+  }
+
+  private async fetchGatewayAgents(): Promise<void> {
+    if (!this.gateway?.connected) {
+      return;
+    }
+    try {
+      const result = await loadAgents(this.gateway.request);
+      this.gatewayAgents = result.agents;
+      this.gatewayDefaultId = result.defaultId;
+    } catch {
+      // fall back to local profiles
+    }
+  }
+
+  /** Merge gateway agents into local profiles for the dropdown */
+  private get mergedAgents(): AgentProfile[] {
+    if (this.gatewayAgents.length === 0) {
+      return this.agentStore?.visibleAgents ?? [];
+    }
+    // Build profiles from gateway agents
+    return this.gatewayAgents.map((ga) => {
+      const local = this.agentStore?.agents.find((a) => a.id === ga.id);
+      const displayName = ga.identity?.name ?? ga.name ?? ga.id;
+      const emoji = ga.identity?.emoji ?? "";
+      return {
+        id: ga.id,
+        name: emoji ? `${emoji} ${displayName}` : displayName,
+        personality: local?.personality ?? "",
+        duties: local?.duties ?? [],
+        tools: local?.tools ?? [],
+        skills: local?.skills ?? [],
+        model: local?.model,
+        createdAt: local?.createdAt ?? new Date().toISOString(),
+        updatedAt: local?.updatedAt ?? new Date().toISOString(),
+        isTaskRunner: local?.isTaskRunner,
+        isAgentBuilder: local?.isAgentBuilder,
+      };
+    });
+  }
 
   private handleAgentSelect(e: CustomEvent<string>): void {
     this.agentStore.selectAgent(e.detail);
@@ -48,15 +104,17 @@ export class AgentPanel extends LitElement {
       `;
     }
 
-    const agent = store.selectedAgent;
+    const agents = this.mergedAgents;
+    const selectedId = store.selectedId ?? this.gatewayDefaultId;
+    const agent = agents.find((a) => a.id === selectedId) ?? agents[0] ?? store.selectedAgent;
     const tabs = this.buildTabs(agent);
 
     return html`
       <div class="agent-panel agent-panel--${this.mode}">
         <div class="agent-panel__header">
           <agent-dropdown-switcher
-            .agents=${store.visibleAgents}
-            .selectedId=${store.selectedId}
+            .agents=${agents}
+            .selectedId=${selectedId}
             .compact=${this.mode === "panel"}
             @agent-select=${(e: CustomEvent<string>) => this.handleAgentSelect(e)}
             @create-new=${() => this.handleCreateNew()}

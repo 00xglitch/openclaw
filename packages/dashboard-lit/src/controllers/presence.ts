@@ -6,6 +6,11 @@ export type PresenceEntry = {
   connectedAt?: number;
   lastActiveAt?: number;
   clientVersion?: string;
+  roles?: string[];
+  scopes?: string[];
+  platform?: string;
+  deviceFamily?: string;
+  deviceId?: string;
 };
 
 export async function loadPresence(request: GatewayRequest): Promise<PresenceEntry[]> {

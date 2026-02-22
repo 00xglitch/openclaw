@@ -7,6 +7,7 @@ export type SessionSummary = {
   displayName?: string;
   derivedTitle?: string;
   channel?: string;
+  agentId?: string;
   updatedAt: number | null;
   model?: string;
   modelProvider?: string;

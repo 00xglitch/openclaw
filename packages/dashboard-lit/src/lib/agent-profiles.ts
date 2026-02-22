@@ -1,12 +1,13 @@
 export interface AgentProfile {
   id: string;
   name: string;
+  emoji?: string;
+  avatar?: string;
   personality: string;
   duties: string[];
   tools: string[];
   skills: string[];
   model?: string;
-  thinkingLevel?: string;
   avatarColor?: string;
   isTaskRunner?: boolean;
   isAgentBuilder?: boolean;
@@ -16,144 +17,30 @@ export interface AgentProfile {
   updatedAt: string;
 }
 
+export type RequestFn = <T = unknown>(method: string, params?: unknown) => Promise<T>;
+
+type GatewayAgent = {
+  id: string;
+  name?: string;
+  identity?: { name?: string; emoji?: string; avatar?: string };
+  model?: string;
+};
+
+type AgentsListResult = {
+  defaultId: string;
+  agents: GatewayAgent[];
+};
+
 const now = () => new Date().toISOString();
 
-export const DEFAULT_AGENTS: AgentProfile[] = [
-  {
-    id: "nova",
-    name: "Nova",
-    personality:
-      "Friendly, knowledgeable general assistant. Excels at conversation, brainstorming, and everyday tasks.",
-    duties: ["Answer questions", "Brainstorm ideas", "Draft content", "Explain concepts"],
-    tools: ["web_search", "calculator", "file_read"],
-    skills: ["general-knowledge", "writing"],
-    model: "claude-sonnet",
-    createdAt: "2025-01-01T00:00:00.000Z",
-    updatedAt: "2025-01-01T00:00:00.000Z",
-  },
-  {
-    id: "code-agent",
-    name: "Code Agent",
-    personality:
-      "Expert software engineer. Writes clean, well-tested code and explains technical concepts clearly.",
-    duties: ["Write code", "Debug issues", "Review pull requests", "Explain architecture"],
-    tools: ["file_read", "file_write", "terminal", "web_search"],
-    skills: ["coding", "debugging", "architecture"],
-    model: "claude-sonnet",
-    createdAt: "2025-01-01T00:00:00.000Z",
-    updatedAt: "2025-01-01T00:00:00.000Z",
-  },
-  {
-    id: "research-agent",
-    name: "Research Agent",
-    personality:
-      "Thorough researcher who digs deep into topics. Provides well-sourced, comprehensive analysis.",
-    duties: ["Research topics", "Analyze data", "Summarize findings", "Compare alternatives"],
-    tools: ["web_search", "file_read", "calculator"],
-    skills: ["research", "analysis"],
-    model: "claude-sonnet",
-    createdAt: "2025-01-01T00:00:00.000Z",
-    updatedAt: "2025-01-01T00:00:00.000Z",
-  },
-  {
-    id: "agent-builder",
-    name: "Agent Builder",
-    personality:
-      "Meta-agent that helps design and create new agents with appropriate skills, tools, and personalities.",
-    duties: ["Design agent profiles", "Configure tools", "Set up skills", "Test agent behavior"],
-    tools: ["file_read", "file_write", "web_search"],
-    skills: ["agent-design", "prompt-engineering"],
-    model: "claude-sonnet",
-    isAgentBuilder: true,
-    createdAt: "2025-01-01T00:00:00.000Z",
-    updatedAt: "2025-01-01T00:00:00.000Z",
-  },
-  {
-    id: "task-runner",
-    name: "Task Runner",
-    personality:
-      "Operations-focused agent that executes multi-step tasks reliably and reports progress clearly.",
-    duties: ["Execute task lists", "Monitor progress", "Report status", "Handle errors"],
-    tools: ["terminal", "file_read", "file_write", "web_search"],
-    skills: ["task-management", "automation"],
-    model: "claude-sonnet",
-    isTaskRunner: true,
-    createdAt: "2025-01-01T00:00:00.000Z",
-    updatedAt: "2025-01-01T00:00:00.000Z",
-  },
-  {
-    id: "workflow-agent",
-    name: "Workflow Agent",
-    personality: "Orchestrates complex workflows across multiple agents.",
-    duties: ["Coordinate agents", "Manage workflows", "Route tasks"],
-    tools: ["terminal", "file_read"],
-    skills: ["orchestration"],
-    model: "claude-sonnet",
-    isHidden: true,
-    createdAt: "2025-01-01T00:00:00.000Z",
-    updatedAt: "2025-01-01T00:00:00.000Z",
-  },
-  {
-    id: "retrospective-agent",
-    name: "Retrospective Agent",
-    personality:
-      "Analytical agent that reviews past interactions and identifies patterns, improvements, and insights.",
-    duties: [
-      "Analyze conversations",
-      "Identify patterns",
-      "Suggest improvements",
-      "Generate reports",
-    ],
-    tools: ["file_read", "web_search"],
-    skills: ["analysis", "reporting"],
-    model: "claude-sonnet",
-    isRetrospective: true,
-    createdAt: "2025-01-01T00:00:00.000Z",
-    updatedAt: "2025-01-01T00:00:00.000Z",
-  },
-  {
-    id: "marketing-agent",
-    name: "Marketing Agent",
-    personality:
-      "Creative content strategist who crafts compelling copy, campaigns, and brand messaging.",
-    duties: ["Write copy", "Plan campaigns", "Analyze audience", "Create content calendars"],
-    tools: ["web_search", "file_read", "file_write"],
-    skills: ["copywriting", "marketing-strategy"],
-    model: "claude-sonnet",
-    createdAt: "2025-01-01T00:00:00.000Z",
-    updatedAt: "2025-01-01T00:00:00.000Z",
-  },
-  {
-    id: "vibes-checker",
-    name: "Vibes Checker",
-    personality:
-      "Brand and tone analyst who evaluates content for consistency, vibe, and audience fit.",
-    duties: ["Review tone", "Check brand alignment", "Evaluate messaging", "Score content vibes"],
-    tools: ["web_search", "file_read"],
-    skills: ["brand-analysis", "tone-evaluation"],
-    model: "claude-sonnet",
-    createdAt: "2025-01-01T00:00:00.000Z",
-    updatedAt: "2025-01-01T00:00:00.000Z",
-  },
-];
-
-const STORAGE_KEY = "claw-dash:agent-profiles:v1";
+const STORAGE_KEY = "claw-dash:agent-profiles:v2";
 
 function isValidProfile(o: unknown): o is AgentProfile {
   if (!o || typeof o !== "object") {
     return false;
   }
   const p = o as Record<string, unknown>;
-  return (
-    typeof p.id === "string" &&
-    typeof p.name === "string" &&
-    typeof p.personality === "string" &&
-    Array.isArray(p.duties) &&
-    Array.isArray(p.tools) &&
-    Array.isArray(p.skills) &&
-    typeof p.createdAt === "string" &&
-    typeof p.updatedAt === "string"
-  );
+  return typeof p.id === "string" && typeof p.name === "string";
 }
 
 function loadFromStorage(): AgentProfile[] {
@@ -176,30 +63,21 @@ function saveToStorage(profiles: AgentProfile[]): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(profiles));
 }
 
-/** Merge stored profiles with defaults so new defaults are seeded automatically. */
-function mergeWithDefaults(stored: AgentProfile[]): AgentProfile[] {
-  const byId = new Map(stored.map((p) => [p.id, p]));
-  for (const def of DEFAULT_AGENTS) {
-    if (!byId.has(def.id)) {
-      byId.set(def.id, def);
-    }
-  }
-  const order = DEFAULT_AGENTS.map((d) => d.id);
-  const sorted = [...byId.values()].toSorted((a, b) => {
-    const ai = order.indexOf(a.id);
-    const bi = order.indexOf(b.id);
-    if (ai >= 0 && bi >= 0) {
-      return ai - bi;
-    }
-    if (ai >= 0) {
-      return -1;
-    }
-    if (bi >= 0) {
-      return 1;
-    }
-    return 0;
-  });
-  return sorted;
+function mapGatewayAgent(agent: GatewayAgent): AgentProfile {
+  const ts = now();
+  return {
+    id: agent.id,
+    name: agent.identity?.name ?? agent.name ?? agent.id,
+    emoji: agent.identity?.emoji,
+    avatar: agent.identity?.avatar,
+    personality: "",
+    duties: [],
+    tools: [],
+    skills: [],
+    model: agent.model,
+    createdAt: ts,
+    updatedAt: ts,
+  };
 }
 
 export type AgentStoreListener = () => void;
@@ -207,6 +85,7 @@ export type AgentStoreListener = () => void;
 export class AgentProfileStore {
   private _agents: AgentProfile[] = [];
   private _selectedId: string | null = null;
+  private _defaultId: string | null = null;
   private _listeners = new Set<AgentStoreListener>();
   private _storageHandler: ((e: StorageEvent) => void) | null = null;
 
@@ -229,8 +108,18 @@ export class AgentProfileStore {
     return this._agents.find((a) => a.id === this._selectedId) ?? null;
   }
 
+  get defaultId(): string | null {
+    return this._defaultId;
+  }
+
   constructor() {
-    this.load();
+    this._agents = loadFromStorage();
+    if (this._agents.length && !this._selectedId) {
+      const first = this.visibleAgents[0];
+      if (first) {
+        this._selectedId = first.id;
+      }
+    }
   }
 
   subscribe(fn: AgentStoreListener): () => void {
@@ -244,16 +133,50 @@ export class AgentProfileStore {
     }
   }
 
-  private load(): void {
-    const stored = loadFromStorage();
-    this._agents = mergeWithDefaults(stored);
-    saveToStorage(this._agents);
-    if (!this._selectedId) {
-      const first = this.visibleAgents[0];
-      if (first) {
-        this._selectedId = first.id;
-      }
+  async syncFromGateway(requestFn: RequestFn): Promise<void> {
+    const result = await requestFn<AgentsListResult>("agents.list", {});
+    if (!result || !Array.isArray(result.agents)) {
+      return;
     }
+
+    this._defaultId = result.defaultId ?? null;
+
+    // Merge: gateway agents take priority, preserve local-only agents
+    const gatewayIds = new Set(result.agents.map((a) => a.id));
+    const localOnly = this._agents.filter(
+      (a) => !gatewayIds.has(a.id) && a.createdAt !== a.updatedAt,
+    );
+    const gatewayProfiles = result.agents.map((ga) => {
+      const existing = this._agents.find((a) => a.id === ga.id);
+      const mapped = mapGatewayAgent(ga);
+      // Preserve local customizations if the agent existed before
+      if (existing) {
+        return {
+          ...mapped,
+          personality: existing.personality || mapped.personality,
+          duties: existing.duties.length ? existing.duties : mapped.duties,
+          tools: existing.tools.length ? existing.tools : mapped.tools,
+          skills: existing.skills.length ? existing.skills : mapped.skills,
+          avatarColor: existing.avatarColor,
+          isHidden: existing.isHidden,
+          createdAt: existing.createdAt,
+          updatedAt: now(),
+        };
+      }
+      return mapped;
+    });
+
+    this._agents = [...gatewayProfiles, ...localOnly];
+    saveToStorage(this._agents);
+
+    if (!this._selectedId || !this._agents.some((a) => a.id === this._selectedId)) {
+      this._selectedId =
+        this._defaultId && this._agents.some((a) => a.id === this._defaultId)
+          ? this._defaultId
+          : (this.visibleAgents[0]?.id ?? null);
+    }
+
+    this.notify();
   }
 
   startSync(): void {
@@ -264,7 +187,7 @@ export class AgentProfileStore {
       if (e.key !== STORAGE_KEY) {
         return;
       }
-      this.load();
+      this._agents = loadFromStorage();
       this.notify();
     };
     window.addEventListener("storage", this._storageHandler);
@@ -289,12 +212,13 @@ export class AgentProfileStore {
     const profile: AgentProfile = {
       id,
       name: partial.name,
+      emoji: partial.emoji,
+      avatar: partial.avatar,
       personality: partial.personality ?? "",
       duties: partial.duties ?? [],
       tools: partial.tools ?? [],
       skills: partial.skills ?? [],
       model: partial.model,
-      thinkingLevel: partial.thinkingLevel,
       avatarColor: partial.avatarColor,
       isTaskRunner: partial.isTaskRunner,
       isAgentBuilder: partial.isAgentBuilder,
@@ -317,10 +241,6 @@ export class AgentProfileStore {
   }
 
   deleteAgent(id: string): void {
-    const isDefault = DEFAULT_AGENTS.some((d) => d.id === id);
-    if (isDefault) {
-      return;
-    }
     this._agents = this._agents.filter((a) => a.id !== id);
     if (this._selectedId === id) {
       this._selectedId = this.visibleAgents[0]?.id ?? null;
