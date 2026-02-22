@@ -125,6 +125,13 @@ export function extractToolResults(
     .map((b) => ({ toolUseId: b.tool_use_id, content: b.content }));
 }
 
+export async function resetSession(
+  request: GatewayRequest,
+  sessionKey: string,
+): Promise<{ ok: true; key: string }> {
+  return request<{ ok: true; key: string }>("sessions.reset", { key: sessionKey });
+}
+
 export async function updateSession(
   request: GatewayRequest,
   sessionKey: string,

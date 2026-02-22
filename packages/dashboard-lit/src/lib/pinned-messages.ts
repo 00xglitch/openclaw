@@ -36,6 +36,11 @@ export class PinnedMessages {
     }
   }
 
+  clear(): void {
+    this._indices.clear();
+    this.save();
+  }
+
   private load(): void {
     try {
       const raw = localStorage.getItem(this.key);

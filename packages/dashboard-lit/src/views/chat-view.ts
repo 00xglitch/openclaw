@@ -11,6 +11,7 @@ import {
   loadHistory,
   sendMessage,
   abortRun,
+  resetSession,
   updateSession,
   extractText,
   type ChatMessage,
@@ -373,6 +374,33 @@ export class AgentChat extends LitElement {
     } catch {
       // best-effort
     }
+  }
+
+  private async onNewChat(): Promise<void> {
+    if (!this.gateway?.connected || this.submitting) {
+      return;
+    }
+    try {
+      await resetSession(this.gateway.request, this.sessionKey);
+      this.messages = [];
+      this.historyCount = 0;
+      this.errorText = "";
+      this.clearStreamState();
+      this.pinnedMessages.clear();
+      this.searchOpen = false;
+      this.searchQuery = "";
+      this.expandedDuty = null;
+      this.outlineDraft = "";
+    } catch (err) {
+      this.errorText = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  private async onCompact(): Promise<void> {
+    if (!this.gateway?.connected || this.submitting) {
+      return;
+    }
+    void this.onSend("/compact");
   }
 
   /* ── Duty outline (empty state) ────────────────────── */
@@ -1025,6 +1053,19 @@ export class AgentChat extends LitElement {
               <button class="btn-ghost" @click=${() => this.exportMarkdown()} title="Export" ?disabled=${this.messages.length === 0}>
                 ${icon("download", { className: "icon-xs" })}
               </button>
+              ${
+                this.messages.length > 0
+                  ? html`
+                    <span class="agent-chat__input-divider"></span>
+                    <button class="btn-ghost" @click=${() => void this.onCompact()} title="Compact context" ?disabled=${this.submitting}>
+                      ${icon("refresh", { className: "icon-xs" })}
+                    </button>
+                    <button class="btn-ghost agent-chat__new-chat-btn" @click=${() => void this.onNewChat()} title="New chat" ?disabled=${this.submitting}>
+                      ${icon("plus", { className: "icon-xs" })}
+                    </button>
+                  `
+                  : nothing
+              }
             </div>
 
             ${
