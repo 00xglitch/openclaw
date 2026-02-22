@@ -205,15 +205,16 @@
 
 .status-list {
   display: grid;
-  gap: 8px;
+  gap: 0;
 }
 
 .status-list div {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--border);
+  padding: 7px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  font-size: 13px;
 }
 
 .status-list div:last-child {
@@ -228,15 +229,15 @@
 }
 
 .account-card-list {
-  margin-top: 16px;
+  margin-top: 14px;
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .account-card {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  padding: 12px;
+  padding: 12px 14px;
   background: var(--bg-elevated);
   transition: border-color var(--duration-fast) ease;
 }
@@ -253,17 +254,18 @@
 }
 
 .account-card-title {
-  font-weight: 500;
+  font-weight: 600;
+  font-size: 13px;
 }
 
 .account-card-id {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 11px;
   color: var(--muted);
 }
 
 .account-card-status {
-  margin-top: 10px;
+  margin-top: 8px;
   font-size: 13px;
 }
 
@@ -274,6 +276,20 @@
 .account-card-error {
   margin-top: 8px;
   color: var(--danger);
+  font-size: 12px;
+}
+
+/* Channel card refinements */
+.grid.grid-cols-2 > .card {
+  display: flex;
+  flex-direction: column;
+}
+
+.grid.grid-cols-2 > .card > .card-title {
+  font-size: 15px;
+}
+
+.grid.grid-cols-2 > .card > .card-sub {
   font-size: 12px;
 }
 
@@ -1871,13 +1887,18 @@
 .agents-layout {
   display: grid;
   grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
-  gap: 16px;
+  gap: 20px;
+  align-items: start;
 }
 
 .agents-sidebar {
   display: grid;
   gap: 12px;
-  align-self: start;
+  position: sticky;
+  top: 14px;
+  max-height: calc(100vh - var(--shell-topbar-height) - 48px);
+  overflow-y: auto;
+  scrollbar-width: thin;
 }
 
 .agents-main {
@@ -1887,47 +1908,54 @@
 
 .agent-list {
   display: grid;
-  gap: 8px;
+  gap: 4px;
 }
 
 .agent-row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   width: 100%;
   text-align: left;
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   border-radius: var(--radius-md);
-  background: var(--card);
-  padding: 10px 12px;
+  background: transparent;
+  padding: 8px 10px;
   cursor: pointer;
-  transition: border-color var(--duration-fast) ease;
+  transition:
+    border-color var(--duration-fast) ease,
+    background var(--duration-fast) ease;
 }
 
 .agent-row:hover {
-  border-color: var(--border-strong);
+  background: var(--bg-hover);
+  border-color: var(--border);
 }
 
 .agent-row.active {
-  border-color: var(--accent);
-  box-shadow: var(--focus-ring);
+  background: color-mix(in srgb, var(--accent-subtle) 70%, var(--secondary));
+  border-color: color-mix(in srgb, var(--accent) 34%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
 .agent-avatar {
-  width: 32px;
-  height: 32px;
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
   background: var(--secondary);
+  border: 1px solid var(--border);
   display: grid;
   place-items: center;
   font-weight: 600;
+  font-size: 15px;
 }
 
 .agent-avatar--lg {
   width: 48px;
   height: 48px;
-  font-size: 20px;
+  font-size: 22px;
+  border-width: 2px;
 }
 
 .agent-info {
@@ -1938,22 +1966,24 @@
 
 .agent-title {
   font-weight: 600;
+  font-size: 13px;
 }
 
 .agent-sub {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .agent-pill {
   border: 1px solid var(--border);
   border-radius: var(--radius-full);
-  padding: 4px 10px;
-  font-size: 11px;
+  padding: 3px 8px;
+  font-size: 10px;
   color: var(--muted);
   background: var(--secondary);
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  white-space: nowrap;
 }
 
 .agent-pill.warn {
@@ -1983,27 +2013,34 @@
 
 .agent-tabs {
   display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0;
 }
 
 .agent-tab {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-full);
-  padding: 6px 14px;
-  font-size: 12px;
-  font-weight: 600;
-  background: var(--secondary);
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 10px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  background: transparent;
+  color: var(--muted);
   cursor: pointer;
   transition:
     border-color var(--duration-fast) ease,
-    background var(--duration-fast) ease;
+    color var(--duration-fast) ease;
+}
+
+.agent-tab:hover {
+  color: var(--text);
 }
 
 .agent-tab.active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: white;
+  background: transparent;
+  border-bottom-color: var(--accent);
+  color: var(--text-strong);
 }
 
 .agents-overview-grid {
@@ -2014,14 +2051,24 @@
 
 .agent-kv {
   display: grid;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
+  padding: 10px 14px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
 }
 
 .agent-kv > div {
   min-width: 0;
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+.agent-kv .label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .agent-kv-sub {
@@ -2247,6 +2294,22 @@
 @media (max-width: 980px) {
   .agents-layout {
     grid-template-columns: 1fr;
+  }
+
+  .agents-sidebar {
+    position: static;
+    max-height: none;
+    overflow-y: visible;
+  }
+
+  .agent-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .agent-row {
+    flex: 0 0 auto;
   }
 
   .agent-header {
