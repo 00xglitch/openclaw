@@ -134,6 +134,7 @@ services:
       resources:
         limits:
           memory: 24G
+          cpus: '8'
       restart_policy:
         condition: on-failure
         delay: 10s
@@ -204,6 +205,37 @@ services:
       restart_policy:
         condition: on-failure
         delay: 5s
+
+  # === PostgreSQL Backup — daily pg_dump with 7-day retention ===
+  pg-backup:
+    image: pgvector/pgvector:pg16
+    networks:
+      - openclaw-internal
+    secrets:
+      - zep_db_password
+    volumes:
+      - type: bind
+        source: /home/glitch/.openclaw/backups/postgres
+        target: /backups
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        while true; do
+          PGPASSWORD=$$(cat /run/secrets/zep_db_password) pg_dump -h tasks.postgres -U zep zep \
+            | gzip > /backups/zep-$$(date +%Y%m%d-%H%M).sql.gz
+          echo "[pg-backup] $$(date -Iseconds) backup complete: zep-$$(date +%Y%m%d-%H%M).sql.gz"
+          find /backups -name '*.sql.gz' -mtime +7 -delete
+          sleep 86400
+        done
+    deploy:
+      mode: replicated
+      replicas: 1
+      resources:
+        limits:
+          memory: 128M
+      restart_policy:
+        condition: on-failure
+        delay: 60s
 
   # === OpenClaw Gateway ===
   openclaw-gateway:
