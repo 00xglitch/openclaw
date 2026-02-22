@@ -58,8 +58,9 @@ async function runGatewayHealthCheck(params: {
   });
   const remoteUrl = params.cfg.gateway?.remote?.url?.trim();
   const wsUrl = params.cfg.gateway?.mode === "remote" && remoteUrl ? remoteUrl : localLinks.wsUrl;
-  const token = params.cfg.gateway?.auth?.token ?? process.env.OPENCLAW_GATEWAY_TOKEN;
-  const password = params.cfg.gateway?.auth?.password ?? process.env.OPENCLAW_GATEWAY_PASSWORD;
+  const token = process.env.OPENCLAW_GATEWAY_TOKEN?.trim() || params.cfg.gateway?.auth?.token;
+  const password =
+    process.env.OPENCLAW_GATEWAY_PASSWORD?.trim() || params.cfg.gateway?.auth?.password;
 
   await waitForGatewayReachable({
     url: wsUrl,
@@ -244,8 +245,8 @@ export async function runConfigureWizard(
     const localUrl = "ws://127.0.0.1:18789";
     const localProbe = await probeGatewayReachable({
       url: localUrl,
-      token: baseConfig.gateway?.auth?.token ?? process.env.OPENCLAW_GATEWAY_TOKEN,
-      password: baseConfig.gateway?.auth?.password ?? process.env.OPENCLAW_GATEWAY_PASSWORD,
+      token: process.env.OPENCLAW_GATEWAY_TOKEN?.trim() || baseConfig.gateway?.auth?.token,
+      password: process.env.OPENCLAW_GATEWAY_PASSWORD?.trim() || baseConfig.gateway?.auth?.password,
     });
     const remoteUrl = baseConfig.gateway?.remote?.url?.trim() ?? "";
     const remoteProbe = remoteUrl
@@ -506,9 +507,11 @@ export async function runConfigureWizard(
       basePath: nextConfig.gateway?.controlUi?.basePath,
     });
     // Try both new and old passwords since gateway may still have old config.
-    const newPassword = nextConfig.gateway?.auth?.password ?? process.env.OPENCLAW_GATEWAY_PASSWORD;
-    const oldPassword = baseConfig.gateway?.auth?.password ?? process.env.OPENCLAW_GATEWAY_PASSWORD;
-    const token = nextConfig.gateway?.auth?.token ?? process.env.OPENCLAW_GATEWAY_TOKEN;
+    const newPassword =
+      process.env.OPENCLAW_GATEWAY_PASSWORD?.trim() || nextConfig.gateway?.auth?.password;
+    const oldPassword =
+      process.env.OPENCLAW_GATEWAY_PASSWORD?.trim() || baseConfig.gateway?.auth?.password;
+    const token = process.env.OPENCLAW_GATEWAY_TOKEN?.trim() || nextConfig.gateway?.auth?.token;
 
     let gatewayProbe = await probeGatewayReachable({
       url: links.wsUrl,
