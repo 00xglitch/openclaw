@@ -1,0 +1,76 @@
+FROM openclaw:v2026.2.21-base
+
+USER root
+
+# ── System packages + external repo keys (single apt layer) ──────────
+# Combines: base utils, Docker CLI, Tailscale CLI, GitHub CLI, skill binaries
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      python3 python3-pip python3-venv \
+      ca-certificates curl gnupg \
+      jq ripgrep git ffmpeg tmux && \
+    # Docker CE CLI repo
+    install -m 0755 -d /etc/apt/keyrings && \
+    curl -fsSL https://download.docker.com/linux/debian/gpg \
+      -o /etc/apt/keyrings/docker.asc && \
+    chmod a+r /etc/apt/keyrings/docker.asc && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable" \
+      > /etc/apt/sources.list.d/docker.list && \
+    # Tailscale CLI repo
+    curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg \
+      -o /usr/share/keyrings/tailscale-archive-keyring.gpg && \
+    curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.tailscale-keyring.list \
+      -o /etc/apt/sources.list.d/tailscale.list && \
+    # GitHub CLI repo
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      -o /usr/share/keyrings/githubcli-archive-keyring.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+      > /etc/apt/sources.list.d/github-cli.list && \
+    # Install from all repos in one pass
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+      docker-ce-cli tailscale gh && \
+    rm -rf /var/lib/apt/lists/*
+
+# ── Chromium + Xvfb for browser automation skills ────────────────────
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      chromium xvfb fonts-liberation fonts-noto-color-emoji \
+      libatk-bridge2.0-0 libdrm2 libgbm1 libnss3 libxss1 && \
+    rm -rf /var/lib/apt/lists/*
+ENV CHROME_BIN=/usr/bin/chromium
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=1
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+
+# ── Gold framework Python deps ───────────────────────────────────────
+RUN pip3 install --break-system-packages --no-cache-dir \
+      litellm \
+      crewai \
+      'pydantic-ai[ollama]' \
+      mem0ai \
+      zep-python \
+      qdrant-client \
+      openai \
+      ollama \
+      langchain
+
+# ── LanceDB extension deps ──────────────────────────────────────────
+RUN cd /app/extensions/memory-lancedb && npm install --no-save 2>/dev/null || \
+    (mkdir -p /tmp/lancedb-deps && cd /tmp/lancedb-deps && \
+     echo '{"private":true}' > package.json && \
+     npm install --no-save openai @lancedb/lancedb @sinclair/typebox && \
+     cp -r node_modules /app/extensions/memory-lancedb/ && \
+     rm -rf /tmp/lancedb-deps)
+
+# ── LanceDB config patches (nomic-embed-text via Ollama) ────────────
+COPY extensions/memory-lancedb/config.ts /app/extensions/memory-lancedb/config.ts
+COPY extensions/memory-lancedb/openclaw.plugin.json /app/extensions/memory-lancedb/openclaw.plugin.json
+
+# ── Runtime directories + permissions ────────────────────────────────
+RUN mkdir -p /home/node/.agentic_ai/mem0 && \
+    chown -R node:node /home/node/.agentic_ai
+
+# Docker socket access: host docker group GID=960
+RUN groupadd -g 960 docker && usermod -aG docker node
+
+USER node
