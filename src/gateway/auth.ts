@@ -246,8 +246,8 @@ export function resolveGatewayAuth(params: {
     }
   }
   const env = params.env ?? process.env;
-  const token = authConfig.token ?? env.OPENCLAW_GATEWAY_TOKEN ?? undefined;
-  const password = authConfig.password ?? env.OPENCLAW_GATEWAY_PASSWORD ?? undefined;
+  const token = env.OPENCLAW_GATEWAY_TOKEN?.trim() || authConfig.token || undefined;
+  const password = env.OPENCLAW_GATEWAY_PASSWORD?.trim() || authConfig.password || undefined;
   const trustedProxy = authConfig.trustedProxy;
 
   let mode: ResolvedGatewayAuth["mode"];

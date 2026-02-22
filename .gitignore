@@ -17,6 +17,8 @@ __pycache__/
 ui/src/ui/__screenshots__/
 ui/playwright-report/
 ui/test-results/
+packages/dashboard-next/.next/
+packages/dashboard-next/out/
 
 # Mise configuration files
 mise.toml
@@ -75,6 +77,9 @@ apps/ios/*.dSYM.zip
 # provisioning profiles (local)
 apps/ios/*.mobileprovision
 
+# Pre-commit config (local only; use .local/.pre-commit-config.yaml)
+.pre-commit-config.yaml
+
 # Local untracked files
 .local/
 docs/.local/
@@ -99,5 +104,7 @@ package-lock.json
 
 # Local iOS signing overrides
 apps/ios/LocalSigning.xcconfig
+.ant-colony/
+
 # Generated protocol schema (produced via pnpm protocol:gen)
 dist/protocol.schema.json

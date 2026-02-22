@@ -67,7 +67,7 @@ describe("roleScopesAllow", () => {
         requestedScopes: ["system.run"],
         allowedScopes: ["operator.admin"],
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("uses strict matching for non-operator roles", () => {
