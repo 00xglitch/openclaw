@@ -73,6 +73,7 @@ import { renderDebug } from "./views/debug.ts";
 import { renderExecApprovalPrompt } from "./views/exec-approval.ts";
 import { renderGatewayUrlConfirmation } from "./views/gateway-url-confirmation.ts";
 import { renderInstances } from "./views/instances.ts";
+import { renderLoginGate } from "./views/login-gate.ts";
 import { renderLogs } from "./views/logs.ts";
 import { renderNodes } from "./views/nodes.ts";
 import { renderOverview } from "./views/overview.ts";
@@ -146,6 +147,16 @@ export function renderApp(state: AppViewState) {
       ? state.updateAvailable
       : null;
   const versionStatusClass = availableUpdate ? "warn" : "ok";
+
+  // Gate: require successful gateway connection before showing the dashboard.
+  // The gateway URL confirmation overlay is always rendered so URL-param flows still work.
+  if (!state.connected) {
+    return html`
+      ${renderLoginGate(state)}
+      ${renderGatewayUrlConfirmation(state)}
+    `;
+  }
+
   const presenceCount = state.presenceEntries.length;
   const sessionsCount = state.sessionsResult?.count ?? null;
   const cronNext = state.cronStatus?.nextWakeAtMs ?? null;
