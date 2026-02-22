@@ -96,26 +96,29 @@ for (const filePath of fileArgs) {
       pushViolation(filePath, i + 1, "gateway auth secret literal detected in command");
     }
 
-    let ipv4Match = IPV4_PRIVATE_RE.exec(line);
-    while (ipv4Match) {
-      pushViolation(filePath, i + 1, `private IP detected: ${ipv4Match[0]}`);
-      ipv4Match = IPV4_PRIVATE_RE.exec(line);
-    }
-    IPV4_PRIVATE_RE.lastIndex = 0;
+    // Skip IP checks for lines with explicit allow comment
+    if (!line.includes("allow-private-ip")) {
+      let ipv4Match = IPV4_PRIVATE_RE.exec(line);
+      while (ipv4Match) {
+        pushViolation(filePath, i + 1, `private IP detected: ${ipv4Match[0]}`);
+        ipv4Match = IPV4_PRIVATE_RE.exec(line);
+      }
+      IPV4_PRIVATE_RE.lastIndex = 0;
 
-    let ipv6Private = IPV6_PRIVATE_RE.exec(line);
-    while (ipv6Private) {
-      pushViolation(filePath, i + 1, `private IPv6 detected: ${ipv6Private[0]}`);
-      ipv6Private = IPV6_PRIVATE_RE.exec(line);
-    }
-    IPV6_PRIVATE_RE.lastIndex = 0;
+      let ipv6Private = IPV6_PRIVATE_RE.exec(line);
+      while (ipv6Private) {
+        pushViolation(filePath, i + 1, `private IPv6 detected: ${ipv6Private[0]}`);
+        ipv6Private = IPV6_PRIVATE_RE.exec(line);
+      }
+      IPV6_PRIVATE_RE.lastIndex = 0;
 
-    let ipv6LinkLocal = IPV6_LINK_LOCAL_RE.exec(line);
-    while (ipv6LinkLocal) {
-      pushViolation(filePath, i + 1, `link-local IPv6 detected: ${ipv6LinkLocal[0]}`);
-      ipv6LinkLocal = IPV6_LINK_LOCAL_RE.exec(line);
+      let ipv6LinkLocal = IPV6_LINK_LOCAL_RE.exec(line);
+      while (ipv6LinkLocal) {
+        pushViolation(filePath, i + 1, `link-local IPv6 detected: ${ipv6LinkLocal[0]}`);
+        ipv6LinkLocal = IPV6_LINK_LOCAL_RE.exec(line);
+      }
+      IPV6_LINK_LOCAL_RE.lastIndex = 0;
     }
-    IPV6_LINK_LOCAL_RE.lastIndex = 0;
   }
 
   const nestedGatewaySecretRe = /["'](password|token)["']\s*:\s*["']([^"'\n]+)["']/g;
