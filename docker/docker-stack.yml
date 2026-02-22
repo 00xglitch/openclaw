@@ -207,7 +207,7 @@ services:
 
   # === OpenClaw Gateway ===
   openclaw-gateway:
-    image: openclaw-gateway:v2026.2.20-patched
+    image: openclaw-gateway:v2026.2.21-merged
     networks:
       - openclaw-internal
       - openclaw-monitoring
@@ -282,6 +282,8 @@ services:
     deploy:
       mode: replicated
       replicas: 1
+      # Note: Gateway accessible via Tailscale HTTPS (glitch.tailc6299e.ts.net)
+      # and direct access (localhost:9443). No Traefik routing needed.
       resources:
         limits:
           memory: 4G
@@ -672,15 +674,14 @@ services:
         published: 80
         protocol: tcp
         mode: host
-      - target: 443
-        published: 443
-        protocol: tcp
-        mode: host
+      # Port 443 removed - Tailscale serve handles HTTPS on 443
     configs:
       - source: traefik_static
         target: /etc/traefik/traefik.yml
       - source: traefik_dynamic_tls
         target: /etc/traefik/dynamic/tls.yml
+      - source: traefik_dynamic_transports
+        target: /etc/traefik/dynamic/transports.yml
     secrets:
       - traefik_basic_auth
       - glitch_lan_cert
@@ -715,6 +716,8 @@ services:
         - "traefik.http.middlewares.rate-limit.ratelimit.period=1m"
         # Gzip compression
         - "traefik.http.middlewares.compress.compress.excludedcontenttypes=image/png,image/jpeg,image/gif"
+        # Insecure transport for self-signed backend certificates
+        - "traefik.http.serverstransports.insecuretransport.insecureskipverify=true"
         # Dummy port so Traefik registers itself
         - "traefik.http.services.traefik.loadbalancer.server.port=8080"
       placement:
@@ -835,4 +838,7 @@ configs:
     external: true
   traefik_dynamic_tls:
     name: traefik_dynamic_tls_v1
+    external: true
+  traefik_dynamic_transports:
+    name: traefik_dynamic_transports_v1
     external: true
