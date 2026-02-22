@@ -25,10 +25,10 @@ export class SettingsView extends LitElement {
   @state() private gatewayUrl = "";
   @state() private token = "";
   @state() private tokenVisible = false;
-  @state() private sessionKey = "agent:main:main";
   @state() private theme: ThemeMode = "docsTheme";
-  @state() private language = "en";
   @state() private saved = false;
+  @state() private testResult: "success" | "error" | null = null;
+  @state() private testLoading = false;
 
   override connectedCallback(): void {
     super.connectedCallback();
@@ -64,7 +64,28 @@ export class SettingsView extends LitElement {
     });
   }
 
+  private async testConnection(): Promise<void> {
+    this.testLoading = true;
+    this.testResult = null;
+    try {
+      await this.gateway.request("health", {});
+      this.testResult = "success";
+    } catch {
+      this.testResult = "error";
+    } finally {
+      this.testLoading = false;
+    }
+    setTimeout(() => {
+      this.testResult = null;
+    }, 3000);
+  }
+
   override render() {
+    const connected = this.gateway?.connected;
+    const helloAny = this.gateway?.hello as Record<string, unknown> | null;
+    const server = helloAny?.["server"] as { version?: string } | undefined;
+    const version = server?.version;
+
     return html`
       <div class="view-container">
         <div class="view-header">
@@ -77,6 +98,15 @@ export class SettingsView extends LitElement {
             <div class="card-header">
               <span class="card-header__prefix">${icon("link", { className: "icon-xs" })}</span>
               <h3 class="card-header__title">Connection</h3>
+              ${
+                connected
+                  ? html`
+                      <span class="chip chip--success">Connected</span>
+                    `
+                  : html`
+                      <span class="chip chip--warn">Disconnected</span>
+                    `
+              }
             </div>
             <div class="settings-form">
               <label>
@@ -106,14 +136,25 @@ export class SettingsView extends LitElement {
                   </button>
                 </div>
               </label>
-              <label>
-                Default Session Key
-                <input type="text" .value=${this.sessionKey}
-                  @input=${(e: Event) => {
-                    this.sessionKey = (e.target as HTMLInputElement).value;
-                  }}
-                />
-              </label>
+              <div style="display:flex;gap:8px;align-items:center;margin-top:4px;">
+                <button type="button" @click=${() => this.testConnection()} ?disabled=${this.testLoading}>
+                  ${
+                    this.testLoading
+                      ? html`${icon("loader", { className: "icon-xs" })} Testing...`
+                      : "Test Connection"
+                  }
+                </button>
+                ${
+                  this.testResult === "success"
+                    ? html`<span class="chip chip--success">${icon("check", { className: "icon-xs" })} Connected</span>`
+                    : nothing
+                }
+                ${
+                  this.testResult === "error"
+                    ? html`<span class="chip chip--error">${icon("alert", { className: "icon-xs" })} Failed</span>`
+                    : nothing
+                }
+              </div>
             </div>
           </div>
 
@@ -135,18 +176,6 @@ export class SettingsView extends LitElement {
                   <option value="light">Light</option>
                 </select>
               </label>
-              <label>
-                Language
-                <select .value=${this.language}
-                  @change=${(e: Event) => {
-                    this.language = (e.target as HTMLSelectElement).value;
-                  }}>
-                  <option value="en">English</option>
-                  <option value="zh-CN">简体中文</option>
-                  <option value="zh-TW">繁體中文</option>
-                  <option value="pt-BR">Português (Brasil)</option>
-                </select>
-              </label>
             </div>
           </div>
         </div>
@@ -162,7 +191,7 @@ export class SettingsView extends LitElement {
             <h3 class="card-header__title">About</h3>
           </div>
           <p class="muted" style="font-size:0.82rem;">
-            OpenClaw Dashboard (Lit Edition). Settings are stored in localStorage and persist across sessions.
+            OpenClaw Dashboard (Lit Edition).${version ? html` Gateway version: <strong>${version}</strong>.` : nothing} Settings are stored in localStorage and persist across sessions.
           </p>
         </div>
       </div>

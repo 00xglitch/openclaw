@@ -8,12 +8,13 @@ import { gatewayContext, type GatewayState } from "../context/gateway-context.js
 import { loadAgents, type AgentsListResult } from "../controllers/agents.js";
 import { loadModels } from "../controllers/models.js";
 import { loadSkillsStatus } from "../controllers/skills.js";
+import { getProviderTheme, modelTag } from "../lib/agent-theme.js";
 import type { ModelCatalogEntry, CronJob, SkillStatusEntry } from "../types/dashboard.js";
 
 type AgentDetail = {
   id: string;
   name?: string;
-  identity?: { name?: string; emoji?: string };
+  identity?: { name?: string; emoji?: string; avatar?: string };
   model?: string;
   skills?: string[];
   sandbox?: string;
@@ -27,9 +28,10 @@ type AgentFile = {
   content?: string;
   dirty?: boolean;
   saving?: boolean;
+  loading?: boolean;
 };
 
-type AgentDetailTab = "overview" | "files" | "tools" | "skills" | "channels" | "cron";
+type AgentDetailTab = "overview" | "files" | "tools" | "skills" | "channels" | "cron" | "subagents";
 
 type BindingEntry = {
   agentId: string;
@@ -37,6 +39,12 @@ type BindingEntry = {
     channel?: string;
     peer?: { id?: string; kind?: string };
   };
+};
+
+type SpawnConfig = {
+  maxSpawnDepth?: number;
+  maxChildrenPerAgent?: number;
+  children?: Record<string, string>; // childId -> parentId
 };
 
 @customElement("agents-view")
@@ -56,6 +64,9 @@ export class AgentsView extends LitElement {
   @state() private activeTab: AgentDetailTab = "overview";
   @state() private models: ModelCatalogEntry[] = [];
   @state() private error = "";
+
+  // Search/filter
+  @state() private sidebarSearch = "";
 
   // Create agent form
   @state() private showCreateForm = false;
@@ -77,6 +88,9 @@ export class AgentsView extends LitElement {
 
   // Files
   @state() private loadingAllFiles = false;
+
+  // Subagents
+  @state() private spawnConfig: SpawnConfig | null = null;
 
   private lastConnectedState: boolean | null = null;
 
@@ -122,7 +136,7 @@ export class AgentsView extends LitElement {
     }
     try {
       const [identity, files, config] = await Promise.allSettled([
-        this.gateway.request<{ identity: { name?: string; emoji?: string } }>(
+        this.gateway.request<{ identity: { name?: string; emoji?: string; avatar?: string } }>(
           "agent.identity.get",
           { agentId },
         ),
@@ -142,10 +156,19 @@ export class AgentsView extends LitElement {
         }
       }
 
+      const identityData =
+        identity.status === "fulfilled" ? identity.value?.identity : agent?.identity;
+
       this.agentDetail = {
         id: agentId,
         name: agent?.name ?? (agentConfig.name as string | undefined),
-        identity: identity.status === "fulfilled" ? identity.value?.identity : agent?.identity,
+        identity: identityData
+          ? {
+              name: identityData.name,
+              emoji: identityData.emoji,
+              avatar: (identityData as { avatar?: string }).avatar,
+            }
+          : undefined,
         model: agent?.model ?? (agentConfig.model as string | undefined),
         skills: agent?.skills ?? (agentConfig.skills as string[] | undefined),
         sandbox: agent?.sandbox ?? (agentConfig.sandbox as string | undefined),
@@ -167,16 +190,24 @@ export class AgentsView extends LitElement {
     if (!this.gateway?.connected || !this.selectedAgentId) {
       return;
     }
+    // Set loading state for this file
+    this.agentFiles = this.agentFiles.map((f) =>
+      f.name === fileName ? { ...f, loading: true } : f,
+    );
     try {
       const result = await this.gateway.request<{ content: string }>("agents.files.get", {
         agentId: this.selectedAgentId,
         fileName,
       });
       this.agentFiles = this.agentFiles.map((f) =>
-        f.name === fileName ? { ...f, content: result?.content ?? "", dirty: false } : f,
+        f.name === fileName
+          ? { ...f, content: result?.content ?? "", dirty: false, loading: false }
+          : f,
       );
     } catch {
-      /* ignore */
+      this.agentFiles = this.agentFiles.map((f) =>
+        f.name === fileName ? { ...f, loading: false } : f,
+      );
     }
   }
 
@@ -289,11 +320,54 @@ export class AgentsView extends LitElement {
           }
           break;
         }
+        case "subagents": {
+          await this.loadSpawnConfig();
+          break;
+        }
       }
     } catch {
       /* best effort */
     } finally {
       this.tabLoading = false;
+    }
+  }
+
+  private async loadSpawnConfig(): Promise<void> {
+    if (!this.gateway?.connected) {
+      return;
+    }
+    try {
+      const config = await this.gateway.request<Record<string, unknown>>("config.get", {
+        section: "agents",
+      });
+      if (config) {
+        const agentsSection = (config.agents ?? config) as Record<string, unknown>;
+        const defaults = agentsSection.defaults as Record<string, unknown> | undefined;
+        const spawn = agentsSection.spawn as Record<string, unknown> | undefined;
+
+        this.spawnConfig = {
+          maxSpawnDepth: (spawn?.maxSpawnDepth ?? defaults?.maxSpawnDepth ?? 2) as number,
+          maxChildrenPerAgent: (spawn?.maxChildrenPerAgent ??
+            defaults?.maxChildrenPerAgent ??
+            5) as number,
+          children: {},
+        };
+
+        // Try to find parent-child relationships from agent configs
+        const children: Record<string, string> = {};
+        for (const [key, value] of Object.entries(agentsSection)) {
+          if (key === "defaults" || key === "spawn" || typeof value !== "object" || !value) {
+            continue;
+          }
+          const agentCfg = value as Record<string, unknown>;
+          if (agentCfg.parentId && typeof agentCfg.parentId === "string") {
+            children[key] = agentCfg.parentId;
+          }
+        }
+        this.spawnConfig = { ...this.spawnConfig, children };
+      }
+    } catch {
+      this.spawnConfig = null;
     }
   }
 
@@ -306,14 +380,37 @@ export class AgentsView extends LitElement {
     this.agentSkills = [];
     this.agentBindings = [];
     this.cronJobs = [];
+    this.spawnConfig = null;
     void this.loadAgentDetail(id);
   }
 
   private switchTab(tab: AgentDetailTab): void {
     this.activeTab = tab;
-    if (tab === "tools" || tab === "skills" || tab === "channels" || tab === "cron") {
+    if (
+      tab === "tools" ||
+      tab === "skills" ||
+      tab === "channels" ||
+      tab === "cron" ||
+      tab === "subagents"
+    ) {
       void this.loadTabData(tab);
     }
+  }
+
+  // ── Filtered agents for sidebar ────────────────────────
+
+  private get filteredAgents() {
+    const agents = this.agentsList?.agents ?? [];
+    const q = this.sidebarSearch.trim().toLowerCase();
+    if (!q) {
+      return agents;
+    }
+    return agents.filter((a) => {
+      const name = (a.identity?.name ?? a.name ?? "").toLowerCase();
+      const id = a.id.toLowerCase();
+      const model = (a.model ?? "").toLowerCase();
+      return name.includes(q) || id.includes(q) || model.includes(q);
+    });
   }
 
   // ── Create Agent ──────────────────────────────────────
@@ -387,7 +484,7 @@ export class AgentsView extends LitElement {
   // ── Render ────────────────────────────────────────────
 
   override render() {
-    const agents = this.agentsList?.agents ?? [];
+    const agents = this.filteredAgents;
     const defaultId = this.agentsList?.defaultId;
 
     return html`
@@ -413,9 +510,37 @@ export class AgentsView extends LitElement {
         <div class="agents-layout">
           <!-- Agent Sidebar -->
           <div class="agents-sidebar">
+            <div style="padding: 0.5rem; border-bottom: 1px solid var(--color-border, #333);">
+              <div style="display: flex; align-items: center; gap: 0.5rem; padding: 0.25rem 0.5rem; border-radius: 0.25rem; background: var(--color-surface-2, #1a1a2e); border: 1px solid var(--color-border, #333);">
+                ${icon("search", { className: "icon-xs" })}
+                <input
+                  type="text"
+                  placeholder="Filter agents..."
+                  .value=${this.sidebarSearch}
+                  @input=${(e: Event) => {
+                    this.sidebarSearch = (e.target as HTMLInputElement).value;
+                  }}
+                  style="flex: 1; background: transparent; border: none; outline: none; color: var(--color-text, #e0e0e0); font-size: 0.85rem;"
+                />
+                ${
+                  this.sidebarSearch
+                    ? html`<button style="background: none; border: none; cursor: pointer; color: var(--color-text-muted, #888); padding: 0;" @click=${() => {
+                        this.sidebarSearch = "";
+                      }}>
+                    ${icon("x", { className: "icon-xs" })}
+                  </button>`
+                    : nothing
+                }
+              </div>
+            </div>
             ${
               this.loading && agents.length === 0
                 ? html`<div class="view-loading">${icon("loader", { className: "icon-xs icon-spin" })} Loading...</div>`
+                : nothing
+            }
+            ${
+              agents.length === 0 && this.sidebarSearch
+                ? html`<div style="padding: 0.75rem; text-align: center;" class="muted">No agents match "${this.sidebarSearch}"</div>`
                 : nothing
             }
             ${agents.map((a) => {
@@ -514,6 +639,7 @@ export class AgentsView extends LitElement {
       { id: "skills", label: "Skills" },
       { id: "channels", label: "Channels" },
       { id: "cron", label: "Cron" },
+      { id: "subagents", label: "Subagents" },
     ];
 
     return html`
@@ -526,7 +652,7 @@ export class AgentsView extends LitElement {
         ${
           !isDefault
             ? html`
-          <button class="btn-ghost" style="color: var(--color-danger, #ef4444);"
+          <button class="btn-ghost" style="color: var(--danger);"
             @click=${() => {
               this.showDeleteConfirm = true;
             }}>
@@ -580,6 +706,8 @@ export class AgentsView extends LitElement {
         return this.renderChannelsTab();
       case "cron":
         return this.renderCronTab();
+      case "subagents":
+        return this.renderSubagentsTab();
       default:
         return nothing;
     }
@@ -597,9 +725,15 @@ export class AgentsView extends LitElement {
     const modelEntry = this.models.find((m) => m.id === modelId);
     const modelName = modelEntry?.name ?? modelId;
     const provider = modelEntry?.provider ?? this.extractProvider(modelId);
+    const providerTheme = getProviderTheme(modelId);
+    const tag = modelTag(modelId);
+
+    const toolKeys = detail.tools ? Object.keys(detail.tools) : [];
+    const skillsList = detail.skills ?? [];
 
     return html`
       <div class="glass-dashboard-card">
+        <!-- Row 1: Agent ID + Model -->
         <div class="stats-row">
           <div class="stat-card">
             <div class="stat-label">${icon("bot", { className: "icon-xs" })} Agent ID</div>
@@ -607,39 +741,33 @@ export class AgentsView extends LitElement {
           </div>
           <div class="stat-card">
             <div class="stat-label">${icon("brain", { className: "icon-xs" })} Model</div>
-            <div class="stat-value">
-              ${modelName}
-              ${provider ? html`<span class="chip" style="margin-left: 0.5rem;">${provider}</span>` : nothing}
+            <div class="stat-value" style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+              <span>${modelName}</span>
+              ${tag ? html`<span class="chip" style="background: ${providerTheme.badge}; color: ${providerTheme.text};">${tag}</span>` : nothing}
+              ${provider ? html`<span class="chip" style="background: ${providerTheme.badge}; color: ${providerTheme.text}; font-size: 0.7rem;">${provider}</span>` : nothing}
             </div>
           </div>
         </div>
+
+        <!-- Row 2: Identity + Sandbox -->
         <div class="stats-row">
           <div class="stat-card">
             <div class="stat-label">${icon("bot", { className: "icon-xs" })} Identity</div>
-            <div class="stat-value">
-              ${detail.identity?.emoji ? html`<span style="margin-right: 0.25rem;">${detail.identity.emoji}</span>` : nothing}
+            <div class="stat-value" style="display: flex; align-items: center; gap: 0.5rem;">
+              ${detail.identity?.emoji ? html`<span style="font-size: 1.4rem;">${detail.identity.emoji}</span>` : nothing}
               ${
-                detail.identity?.name ??
-                html`
-                  <span class="muted">not set</span>
-                `
+                detail.identity?.name
+                  ? html`<span>${detail.identity.name}</span>`
+                  : html`
+                      <span class="muted">not set</span>
+                    `
+              }
+              ${
+                detail.identity?.avatar
+                  ? html`<img src="${detail.identity.avatar}" alt="avatar" style="width: 24px; height: 24px; border-radius: 50%; object-fit: cover;" />`
+                  : nothing
               }
             </div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-label">${icon("fileText", { className: "icon-xs" })} Files</div>
-            <div class="stat-value">${this.agentFiles.length}</div>
-          </div>
-        </div>
-        <div class="stats-row">
-          <div class="stat-card">
-            <div class="stat-label">${icon("hammer", { className: "icon-xs" })} Skills</div>
-            <div class="stat-value">${
-              detail.skills?.length ??
-              html`
-                <span class="muted">default</span>
-              `
-            }</div>
           </div>
           <div class="stat-card">
             <div class="stat-label">${icon("shield", { className: "icon-xs" })} Sandbox</div>
@@ -654,6 +782,44 @@ export class AgentsView extends LitElement {
             </div>
           </div>
         </div>
+
+        <!-- Row 3: Tools + Skills -->
+        <div class="stats-row">
+          <div class="stat-card">
+            <div class="stat-label">${icon("hammer", { className: "icon-xs" })} Tools (${toolKeys.length})</div>
+            <div class="stat-value">
+              ${
+                toolKeys.length > 0
+                  ? html`
+                  <div style="display: flex; flex-wrap: wrap; gap: 0.25rem;">
+                    ${toolKeys.map((t) => html`<span class="chip" style="font-size: 0.75rem;">${t}</span>`)}
+                  </div>
+                `
+                  : html`
+                      <span class="muted">default</span>
+                    `
+              }
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">${icon("zap", { className: "icon-xs" })} Skills (${skillsList.length})</div>
+            <div class="stat-value">
+              ${
+                skillsList.length > 0
+                  ? html`
+                  <div style="display: flex; flex-wrap: wrap; gap: 0.25rem;">
+                    ${skillsList.map((s) => html`<span class="chip" style="font-size: 0.75rem;">${s}</span>`)}
+                  </div>
+                `
+                  : html`
+                      <span class="muted">default</span>
+                    `
+              }
+            </div>
+          </div>
+        </div>
+
+        <!-- Row 4: Heartbeat + Files -->
         <div class="stats-row">
           <div class="stat-card">
             <div class="stat-label">${icon("activity", { className: "icon-xs" })} Heartbeat</div>
@@ -673,6 +839,10 @@ export class AgentsView extends LitElement {
                     `
               }
             </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">${icon("fileText", { className: "icon-xs" })} Files</div>
+            <div class="stat-value">${this.agentFiles.length}</div>
           </div>
         </div>
       </div>
@@ -701,7 +871,7 @@ export class AgentsView extends LitElement {
   // ── Files Tab ─────────────────────────────────────────
 
   private renderFilesTab() {
-    const hasUnloaded = this.agentFiles.some((f) => f.content === undefined);
+    const hasUnloaded = this.agentFiles.some((f) => f.content === undefined && !f.loading);
 
     return html`
       <div class="agent-files">
@@ -741,11 +911,15 @@ export class AgentsView extends LitElement {
           <h3 class="card-header__title">${f.name}</h3>
           <div style="display: flex; gap: 0.5rem; align-items: center;">
             ${
-              f.content === undefined
-                ? html`
-              <button class="btn-ghost-sm" @click=${() => void this.loadFileContent(f.name)}>Load</button>
+              f.loading
+                ? html`<span class="muted" style="font-size: 0.8rem;">${icon("loader", { className: "icon-xs icon-spin" })} Loading...</span>`
+                : f.content === undefined
+                  ? html`
+              <button class="btn-ghost-sm" @click=${() => void this.loadFileContent(f.name)}>
+                ${icon("download", { className: "icon-xs" })} Load
+              </button>
             `
-                : html`
+                  : html`
               ${
                 f.dirty
                   ? html`
@@ -1011,5 +1185,142 @@ export class AgentsView extends LitElement {
       default:
         return "unknown";
     }
+  }
+
+  // ── Subagents Tab ─────────────────────────────────────
+
+  private renderSubagentsTab() {
+    if (this.tabLoading) {
+      return html`<div class="view-loading">${icon("loader", { className: "icon-xs icon-spin" })} Loading spawn config...</div>`;
+    }
+
+    if (!this.spawnConfig) {
+      return html`
+        <div class="glass-dashboard-card"><p class="muted">No spawn configuration available.</p></div>
+      `;
+    }
+
+    const agents = this.agentsList?.agents ?? [];
+    const children = this.spawnConfig.children ?? {};
+    const childEntries = Object.entries(children);
+
+    // Find children of the selected agent
+    const myChildren = childEntries
+      .filter(([, parentId]) => parentId === this.selectedAgentId)
+      .map(([childId]) => childId);
+
+    // Find parent of the selected agent
+    const myParent = children[this.selectedAgentId ?? ""] ?? null;
+
+    return html`
+      <div class="glass-dashboard-card">
+        <div class="card-header">
+          <h3 class="card-header__title">${icon("bot", { className: "icon-xs" })} Subagent Configuration</h3>
+          <button class="btn-ghost-sm" @click=${() => void this.loadTabData("subagents")}>
+            ${icon("refresh", { className: "icon-xs" })} Reload
+          </button>
+        </div>
+
+        <!-- Spawn limits -->
+        <div class="stats-row" style="margin-top: 0.75rem;">
+          <div class="stat-card">
+            <div class="stat-label">Max Spawn Depth</div>
+            <div class="stat-value">${this.spawnConfig.maxSpawnDepth ?? "N/A"}</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Max Children per Agent</div>
+            <div class="stat-value">${this.spawnConfig.maxChildrenPerAgent ?? "N/A"}</div>
+          </div>
+        </div>
+
+        <!-- Parent relationship -->
+        ${
+          myParent
+            ? html`
+          <div style="margin-top: 0.75rem;">
+            <div class="stat-label" style="margin-bottom: 0.5rem;">Parent Agent</div>
+            <div style="display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 0.75rem; border-radius: 0.25rem; background: var(--color-surface-2, #1a1a2e); cursor: pointer;"
+              @click=${() => this.selectAgent(myParent)}>
+              <span style="font-size: 1.2rem;">${this.getAgentEmoji(myParent, agents)}</span>
+              <div style="flex: 1; min-width: 0;">
+                <div style="font-weight: 500;">${this.getAgentName(myParent, agents)}</div>
+                <div class="muted" style="font-size: 0.8rem;">${myParent}</div>
+              </div>
+              <span class="chip">parent</span>
+            </div>
+          </div>
+        `
+            : nothing
+        }
+
+        <!-- Children -->
+        <div style="margin-top: 0.75rem;">
+          <div class="stat-label" style="margin-bottom: 0.5rem;">Children (${myChildren.length})</div>
+          ${
+            myChildren.length > 0
+              ? html`
+              <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                ${myChildren.map(
+                  (childId) => html`
+                  <div style="display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 0.75rem; border-radius: 0.25rem; background: var(--color-surface-2, #1a1a2e); cursor: pointer;"
+                    @click=${() => this.selectAgent(childId)}>
+                    <span style="font-size: 1.2rem;">${this.getAgentEmoji(childId, agents)}</span>
+                    <div style="flex: 1; min-width: 0;">
+                      <div style="font-weight: 500;">${this.getAgentName(childId, agents)}</div>
+                      <div class="muted" style="font-size: 0.8rem;">${childId}</div>
+                    </div>
+                    <span class="chip chip--accent">child</span>
+                  </div>
+                `,
+                )}
+              </div>
+            `
+              : html`
+                  <p class="muted">No child agents spawned by this agent.</p>
+                `
+          }
+        </div>
+
+        <!-- All relationships overview -->
+        ${
+          childEntries.length > 0
+            ? html`
+          <div style="margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid var(--color-border, #333);">
+            <div class="stat-label" style="margin-bottom: 0.5rem;">All Parent-Child Relationships</div>
+            <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+              ${childEntries.map(
+                ([childId, parentId]) => html`
+                <div style="display: flex; align-items: center; gap: 0.5rem; padding: 0.25rem 0.5rem; font-size: 0.85rem;" class="muted">
+                  <span>${this.getAgentEmoji(parentId, agents)}</span>
+                  <span>${this.getAgentName(parentId, agents)}</span>
+                  <span style="opacity: 0.5;">${icon("chevronRight", { className: "icon-xs" })}</span>
+                  <span>${this.getAgentEmoji(childId, agents)}</span>
+                  <span>${this.getAgentName(childId, agents)}</span>
+                </div>
+              `,
+              )}
+            </div>
+          </div>
+        `
+            : nothing
+        }
+      </div>
+    `;
+  }
+
+  private getAgentEmoji(
+    agentId: string,
+    agents: Array<{ id: string; identity?: { emoji?: string } }>,
+  ): string {
+    const agent = agents.find((a) => a.id === agentId);
+    return agent?.identity?.emoji ?? "🤖";
+  }
+
+  private getAgentName(
+    agentId: string,
+    agents: Array<{ id: string; name?: string; identity?: { name?: string } }>,
+  ): string {
+    const agent = agents.find((a) => a.id === agentId);
+    return agent?.identity?.name ?? agent?.name ?? agentId;
   }
 }

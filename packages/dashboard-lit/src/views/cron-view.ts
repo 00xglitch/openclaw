@@ -2,6 +2,7 @@ import { consume } from "@lit/context";
 import { LitElement, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { icon } from "../components/icons.js";
+import "../components/confirm-dialog.js";
 import { gatewayContext, type GatewayState } from "../context/gateway-context.js";
 import { loadCronJobs, loadCronStatus } from "../controllers/cron.js";
 import type { CronJob, CronStatusSummary } from "../types/dashboard.js";
@@ -31,6 +32,17 @@ export class CronView extends LitElement {
   @state() private selectedJobId: string | null = null;
   @state() private runs: CronRunEntry[] = [];
   @state() private error = "";
+  @state() private filterText = "";
+  @state() private deleteConfirmId: string | null = null;
+  @state() private editingJobId: string | null = null;
+  @state() private editForm = {
+    name: "",
+    scheduleKind: "every" as "every" | "at" | "cron",
+    everyMs: "3600000",
+    cronExpr: "",
+    payloadText: "",
+    enabled: true,
+  };
 
   // New job form
   @state() private showForm = false;
@@ -99,6 +111,10 @@ export class CronView extends LitElement {
     }
   }
 
+  private confirmRemoveJob(jobId: string): void {
+    this.deleteConfirmId = jobId;
+  }
+
   private async removeJob(jobId: string): Promise<void> {
     if (!this.gateway?.connected) {
       return;
@@ -112,6 +128,65 @@ export class CronView extends LitElement {
     } catch (err) {
       this.error = err instanceof Error ? err.message : String(err);
     }
+  }
+
+  private startEditing(job: CronJob): void {
+    if (this.editingJobId === job.id) {
+      this.editingJobId = null;
+      return;
+    }
+    this.editingJobId = job.id;
+    const scheduleKind = job.schedule.kind;
+    this.editForm = {
+      name: job.name,
+      scheduleKind,
+      everyMs: scheduleKind === "every" ? String(job.schedule.everyMs) : "3600000",
+      cronExpr: scheduleKind === "cron" ? job.schedule.expr : "",
+      payloadText: job.payload.kind === "systemEvent" ? job.payload.text : job.payload.message,
+      enabled: job.enabled,
+    };
+  }
+
+  private async updateJob(): Promise<void> {
+    if (!this.gateway?.connected || !this.editingJobId) {
+      return;
+    }
+    const updates: Record<string, unknown> = {
+      id: this.editingJobId,
+      name: this.editForm.name,
+      enabled: this.editForm.enabled,
+    };
+    switch (this.editForm.scheduleKind) {
+      case "every":
+        updates.schedule = { kind: "every", everyMs: Number(this.editForm.everyMs) };
+        break;
+      case "cron":
+        updates.schedule = { kind: "cron", expr: this.editForm.cronExpr };
+        break;
+      case "at":
+        updates.schedule = { kind: "at", at: new Date().toISOString() };
+        break;
+    }
+    try {
+      await this.gateway.request("cron.update", updates);
+      this.editingJobId = null;
+      void this.refresh();
+    } catch (err) {
+      this.error = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  private get filteredJobs(): CronJob[] {
+    if (!this.filterText.trim()) {
+      return this.jobs;
+    }
+    const q = this.filterText.toLowerCase();
+    return this.jobs.filter(
+      (job) =>
+        job.name.toLowerCase().includes(q) ||
+        (job.agentId ?? "").toLowerCase().includes(q) ||
+        this.formatSchedule(job).toLowerCase().includes(q),
+    );
   }
 
   private async loadRuns(jobId: string): Promise<void> {
@@ -204,6 +279,15 @@ export class CronView extends LitElement {
           </div>
         </div>
 
+        <div class="view-toolbar" style="margin-bottom:0.75rem;">
+          <input type="text" class="view-search" placeholder="Filter by name, agent, or schedule..."
+            .value=${this.filterText}
+            @input=${(e: Event) => {
+              this.filterText = (e.target as HTMLInputElement).value;
+            }}
+          />
+        </div>
+
         ${this.error ? html`<div class="view-error">${this.error}</div>` : nothing}
 
         <!-- Status Card -->
@@ -275,6 +359,9 @@ export class CronView extends LitElement {
                 ) => {
                   this.formCronExpr = (e.target as HTMLInputElement).value;
                 }} placeholder="0 * * * *" /></label>
+                <div class="muted" style="font-size:0.75rem;">
+                  Every minute: * * * * * · Every hour: 0 * * * * · Daily at midnight: 0 0 * * * · Every Monday: 0 0 * * 1
+                </div>
               `
                   : nothing
               }
@@ -318,12 +405,12 @@ export class CronView extends LitElement {
         }
 
         <div class="cron-jobs">
-          ${this.jobs.map(
+          ${this.filteredJobs.map(
             (job) => html`
             <div class="glass-dashboard-card cron-job-card ${this.selectedJobId === job.id ? "cron-job-card--selected" : ""}">
               <div class="cron-job-header">
                 <div class="cron-job-info">
-                  <span class="cron-job-name">${job.name}</span>
+                  <span class="cron-job-name" style="cursor:pointer;text-decoration:underline dotted;" @click=${() => this.startEditing(job)}>${job.name}</span>
                   <span class="chip ${job.enabled ? "chip--success" : "chip--muted"}">${job.enabled ? "enabled" : "disabled"}</span>
                   ${
                     job.state.lastStatus
@@ -346,7 +433,7 @@ export class CronView extends LitElement {
                   <button class="btn-ghost-sm" @click=${() => void this.loadRuns(job.id)} title="View runs">
                     ${icon("clock", { className: "icon-xs" })}
                   </button>
-                  <button class="btn-ghost-sm" @click=${() => void this.removeJob(job.id)} title="Delete">
+                  <button class="btn-ghost-sm" @click=${() => this.confirmRemoveJob(job.id)} title="Delete">
                     ${icon("x", { className: "icon-xs" })}
                   </button>
                 </div>
@@ -357,6 +444,90 @@ export class CronView extends LitElement {
                 ${job.state.lastRunAtMs ? ` · Last: ${this.formatTime(job.state.lastRunAtMs)}` : ""}
                 ${job.state.lastError ? html` · <span style="color:var(--warn)">${job.state.lastError}</span>` : nothing}
               </div>
+              ${
+                this.editingJobId === job.id
+                  ? html`
+                <div class="cron-form" style="margin-top:0.75rem;border-top:1px solid var(--border);padding-top:0.75rem;">
+                  <label>Name <input type="text" .value=${this.editForm.name} @input=${(
+                    e: Event,
+                  ) => {
+                    this.editForm = {
+                      ...this.editForm,
+                      name: (e.target as HTMLInputElement).value,
+                    };
+                  }} /></label>
+                  <label>Schedule
+                    <select .value=${this.editForm.scheduleKind} @change=${(e: Event) => {
+                      this.editForm = {
+                        ...this.editForm,
+                        scheduleKind: (e.target as HTMLSelectElement).value as
+                          | "every"
+                          | "at"
+                          | "cron",
+                      };
+                    }}>
+                      <option value="every">Every (interval)</option>
+                      <option value="cron">Cron expression</option>
+                      <option value="at">At (one-time)</option>
+                    </select>
+                  </label>
+                  ${
+                    this.editForm.scheduleKind === "every"
+                      ? html`
+                    <label>Interval (ms) <input type="number" .value=${this.editForm.everyMs} @input=${(
+                      e: Event,
+                    ) => {
+                      this.editForm = {
+                        ...this.editForm,
+                        everyMs: (e.target as HTMLInputElement).value,
+                      };
+                    }} /></label>
+                  `
+                      : nothing
+                  }
+                  ${
+                    this.editForm.scheduleKind === "cron"
+                      ? html`
+                    <label>Cron expr <input type="text" .value=${this.editForm.cronExpr} @input=${(
+                      e: Event,
+                    ) => {
+                      this.editForm = {
+                        ...this.editForm,
+                        cronExpr: (e.target as HTMLInputElement).value,
+                      };
+                    }} placeholder="0 * * * *" /></label>
+                    <div class="muted" style="font-size:0.75rem;">
+                      Every minute: * * * * * · Every hour: 0 * * * * · Daily at midnight: 0 0 * * * · Every Monday: 0 0 * * 1
+                    </div>
+                  `
+                      : nothing
+                  }
+                  <label>Payload text <textarea rows="2" .value=${this.editForm.payloadText} @input=${(
+                    e: Event,
+                  ) => {
+                    this.editForm = {
+                      ...this.editForm,
+                      payloadText: (e.target as HTMLTextAreaElement).value,
+                    };
+                  }}></textarea></label>
+                  <label class="view-checkbox"><input type="checkbox" .checked=${this.editForm.enabled} @change=${(
+                    e: Event,
+                  ) => {
+                    this.editForm = {
+                      ...this.editForm,
+                      enabled: (e.target as HTMLInputElement).checked,
+                    };
+                  }} /> Enabled</label>
+                  <div style="display:flex;gap:8px;">
+                    <button class="btn-primary" @click=${() => void this.updateJob()}>Update</button>
+                    <button class="btn-ghost" @click=${() => {
+                      this.editingJobId = null;
+                    }}>Cancel</button>
+                  </div>
+                </div>
+              `
+                  : nothing
+              }
             </div>
           `,
           )}
@@ -411,6 +582,23 @@ export class CronView extends LitElement {
         `
             : nothing
         }
+
+        <confirm-dialog
+          .open=${this.deleteConfirmId !== null}
+          title="Delete Cron Job"
+          message="Are you sure you want to delete this cron job? This action cannot be undone."
+          confirmLabel="Delete"
+          confirmVariant="danger"
+          @confirm=${() => {
+            if (this.deleteConfirmId) {
+              void this.removeJob(this.deleteConfirmId);
+            }
+            this.deleteConfirmId = null;
+          }}
+          @cancel=${() => {
+            this.deleteConfirmId = null;
+          }}
+        ></confirm-dialog>
       </div>
     `;
   }

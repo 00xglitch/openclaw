@@ -4,9 +4,9 @@ export const TAB_GROUPS = [
   { label: "chat", tabs: ["chat"] },
   {
     label: "control",
-    tabs: ["overview", "channels", "instances", "sessions", "usage", "cron"],
+    tabs: ["overview", "channels", "instances", "sessions", "usage", "cron", "retros"],
   },
-  { label: "agent", tabs: ["agents", "skills", "nodes"] },
+  { label: "agent", tabs: ["agents", "skills", "nodes", "workflows"] },
   { label: "settings", tabs: ["config", "settings", "debug", "logs"] },
 ] as const;
 
@@ -26,7 +26,9 @@ export type Tab =
   | "config"
   | "settings"
   | "debug"
-  | "logs";
+  | "logs"
+  | "workflows"
+  | "retros";
 
 const TAB_PATHS: Record<Tab, string> = {
   agents: "/agents",
@@ -43,6 +45,8 @@ const TAB_PATHS: Record<Tab, string> = {
   settings: "/settings",
   debug: "/debug",
   logs: "/logs",
+  workflows: "/workflows",
+  retros: "/retros",
 };
 
 const PATH_TO_TAB = new Map(Object.entries(TAB_PATHS).map(([tab, path]) => [path, tab as Tab]));
@@ -62,6 +66,8 @@ const TAB_TITLES: Record<Tab, string> = {
   settings: "Settings",
   debug: "Debug",
   logs: "Logs",
+  workflows: "Workflows",
+  retros: "Retrospectives",
 };
 
 const TAB_SUBTITLES: Record<Tab, string> = {
@@ -79,6 +85,8 @@ const TAB_SUBTITLES: Record<Tab, string> = {
   settings: "Dashboard preferences",
   debug: "Debug tools",
   logs: "Gateway event logs",
+  workflows: "Multi-agent workflow chains",
+  retros: "Session analysis and insights",
 };
 
 const GROUP_TITLES: Record<TabGroup, string> = {
@@ -103,6 +111,8 @@ const TAB_ICONS: Record<Tab, IconName> = {
   settings: "settings",
   debug: "bug",
   logs: "scrollText",
+  workflows: "activity",
+  retros: "brain",
 };
 
 /** Tabs that have real implementations (not placeholders) */
@@ -121,6 +131,8 @@ export const IMPLEMENTED_TABS: Set<Tab> = new Set([
   "debug",
   "logs",
   "settings",
+  "workflows",
+  "retros",
 ]);
 
 export function normalizeBasePath(basePath: string): string {

@@ -5,6 +5,7 @@ import { icon, type IconName } from "../components/icons.js";
 import "../components/json-viewer.js";
 import "../components/empty-state.js";
 import { gatewayContext, type GatewayState } from "../context/gateway-context.js";
+import { renderQrToCanvas } from "../lib/qr-canvas.js";
 
 type ChannelSnapshot = {
   channels?: Record<string, unknown>;
@@ -19,6 +20,14 @@ type ChannelSnapshot = {
 type BindingEntry = {
   agentId?: string;
   match?: { channel?: string; peer?: unknown };
+};
+
+type ChannelTypeInfo = {
+  key: string;
+  icon: IconName;
+  emoji: string;
+  label: string;
+  description: string;
 };
 
 const CHANNEL_ICONS: Record<string, { icon: IconName; emoji: string }> = {
@@ -36,6 +45,51 @@ const DEFAULT_CHANNEL_ICON: { icon: IconName; emoji: string } = {
   icon: "radio",
   emoji: "\u{1F4E1}",
 };
+
+const ADD_CHANNEL_TYPES: ChannelTypeInfo[] = [
+  {
+    key: "whatsapp",
+    icon: "messageSquare",
+    emoji: "\u{1F4AC}",
+    label: "WhatsApp",
+    description: "Connect via QR code scan",
+  },
+  {
+    key: "telegram",
+    icon: "send",
+    emoji: "\u2708\uFE0F",
+    label: "Telegram",
+    description: "Connect with bot token",
+  },
+  {
+    key: "discord",
+    icon: "monitor",
+    emoji: "\u{1F3AE}",
+    label: "Discord",
+    description: "Connect with bot token",
+  },
+  {
+    key: "signal",
+    icon: "key",
+    emoji: "\u{1F512}",
+    label: "Signal",
+    description: "Secure messaging bridge",
+  },
+  {
+    key: "slack",
+    icon: "radio",
+    emoji: "\u{1F4BC}",
+    label: "Slack",
+    description: "Workspace integration",
+  },
+  {
+    key: "web",
+    icon: "externalLink",
+    emoji: "\u{1F310}",
+    label: "API",
+    description: "Generic REST/WebSocket API",
+  },
+];
 
 @customElement("channels-view")
 export class ChannelsView extends LitElement {
@@ -56,6 +110,16 @@ export class ChannelsView extends LitElement {
   @state() private expandedConfigs = new Set<string>();
   @state() private channelConfigs = new Map<string, unknown>();
   @state() private bindings: BindingEntry[] = [];
+
+  // Add channel modal state
+  @state() private addModalOpen = false;
+  @state() private addSelectedType: string | null = null;
+  @state() private addFormValue = "";
+  @state() private addSaving = false;
+
+  // Per-channel config editing state
+  @state() private editingConfigs = new Map<string, string>();
+  @state() private savingConfig = new Set<string>();
 
   private lastConnectedState: boolean | null = null;
   private qrUnsubscribe: (() => void) | null = null;
@@ -187,12 +251,147 @@ export class ChannelsView extends LitElement {
     return this.bindings.filter((b) => b.match?.channel === channelKey);
   }
 
+  // ── Add Channel Modal ──
+
+  private openAddModal(): void {
+    this.addModalOpen = true;
+    this.addSelectedType = null;
+    this.addFormValue = "";
+    this.addSaving = false;
+  }
+
+  private closeAddModal(): void {
+    this.addModalOpen = false;
+    this.addSelectedType = null;
+    this.addFormValue = "";
+    this.addSaving = false;
+  }
+
+  private selectChannelType(key: string): void {
+    this.addSelectedType = key;
+    this.addFormValue = "";
+  }
+
+  private async submitAddChannel(): Promise<void> {
+    if (!this.gateway?.connected || !this.addSelectedType || this.addSaving) {
+      return;
+    }
+
+    // WhatsApp uses QR flow directly
+    if (this.addSelectedType === "whatsapp") {
+      this.closeAddModal();
+      void this.startWhatsAppLogin();
+      return;
+    }
+
+    const channelKey = this.addSelectedType;
+    const value = this.addFormValue.trim();
+    if (!value) {
+      return;
+    }
+
+    this.addSaving = true;
+    this.error = "";
+
+    try {
+      let configValue: unknown;
+      if (channelKey === "telegram" || channelKey === "discord") {
+        configValue = { token: value };
+      } else {
+        // Try to parse as JSON for generic config
+        try {
+          configValue = JSON.parse(value) as unknown;
+        } catch {
+          configValue = { config: value };
+        }
+      }
+
+      await this.gateway.request("config.patch", {
+        path: `channels.${channelKey}`,
+        value: configValue,
+      });
+
+      this.closeAddModal();
+      void this.refresh();
+    } catch (err) {
+      this.error = err instanceof Error ? err.message : String(err);
+    } finally {
+      this.addSaving = false;
+    }
+  }
+
+  // ── Per-channel config editing ──
+
+  private startEditingConfig(channelKey: string): void {
+    const config = this.channelConfigs.get(channelKey);
+    const text = config != null ? JSON.stringify(config, null, 2) : "{}";
+    const next = new Map(this.editingConfigs);
+    next.set(channelKey, text);
+    this.editingConfigs = next;
+  }
+
+  private cancelEditingConfig(channelKey: string): void {
+    const next = new Map(this.editingConfigs);
+    next.delete(channelKey);
+    this.editingConfigs = next;
+  }
+
+  private updateEditingConfig(channelKey: string, value: string): void {
+    const next = new Map(this.editingConfigs);
+    next.set(channelKey, value);
+    this.editingConfigs = next;
+  }
+
+  private async saveChannelConfig(channelKey: string): Promise<void> {
+    if (!this.gateway?.connected) {
+      return;
+    }
+
+    const text = this.editingConfigs.get(channelKey);
+    if (text == null) {
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text) as unknown;
+    } catch {
+      this.error = `Invalid JSON for ${channelKey} config`;
+      return;
+    }
+
+    const nextSaving = new Set(this.savingConfig);
+    nextSaving.add(channelKey);
+    this.savingConfig = nextSaving;
+    this.error = "";
+
+    try {
+      await this.gateway.request("config.patch", {
+        path: `channels.${channelKey}`,
+        value: parsed,
+      });
+
+      // Clear edit state on success
+      this.cancelEditingConfig(channelKey);
+      void this.refresh();
+    } catch (err) {
+      this.error = err instanceof Error ? err.message : String(err);
+    } finally {
+      const done = new Set(this.savingConfig);
+      done.delete(channelKey);
+      this.savingConfig = done;
+    }
+  }
+
   override render() {
     return html`
       <div class="view-container">
         <div class="view-header">
           <h2 class="view-title">${icon("link", { className: "icon-sm" })} Channels</h2>
           <div class="view-actions">
+            <button class="btn-ghost" @click=${() => this.openAddModal()}>
+              ${icon("plus", { className: "icon-xs" })} Add Channel
+            </button>
             <button class="btn-ghost" @click=${() => void this.refresh()} ?disabled=${this.loading}>
               ${icon("refresh", { className: "icon-xs" })} Refresh
             </button>
@@ -210,6 +409,7 @@ export class ChannelsView extends LitElement {
         ${this.snapshot ? this.renderChannels() : nothing}
 
         ${this.qrModalOpen ? this.renderQrModal() : nothing}
+        ${this.addModalOpen ? this.renderAddModal() : nothing}
       </div>
     `;
   }
@@ -217,7 +417,7 @@ export class ChannelsView extends LitElement {
   private renderQrModal() {
     return html`
       <div class="modal-overlay" @click=${() => this.closeQrModal()}>
-        <div class="glass-dashboard-card" style="max-width:480px;margin:auto;margin-top:10vh;" @click=${(e: Event) => e.stopPropagation()}>
+        <div class="modal-card" @click=${(e: Event) => e.stopPropagation()}>
           <div class="card-header">
             <span class="card-header__prefix">${icon("messageSquare", { className: "icon-sm" })}</span>
             <h3 class="card-header__title">WhatsApp QR Login</h3>
@@ -225,19 +425,161 @@ export class ChannelsView extends LitElement {
               ${icon("x", { className: "icon-xs" })}
             </button>
           </div>
-          ${
-            this.qrLoading
-              ? html`<div class="view-loading">${icon("loader", { className: "icon-sm icon-spin" })} Waiting for QR code...</div>`
-              : this.qrData
-                ? html`<pre class="code-block" style="word-break:break-all;white-space:pre-wrap;font-size:0.7rem;">${this.qrData}</pre>`
-                : html`
-                    <p class="muted">No QR data received yet.</p>
-                  `
-          }
-          <div class="channel-actions" style="margin-top:0.5rem;">
-            <button class="btn-ghost-sm" @click=${() => this.closeQrModal()}>Cancel</button>
+          <div style="display:flex;flex-direction:column;align-items:center;padding:1rem 0;">
+            ${
+              this.qrLoading
+                ? html`<div class="view-loading">${icon("loader", { className: "icon-sm icon-spin" })} Waiting for QR code...</div>`
+                : this.qrData
+                  ? this.renderQrCode()
+                  : html`
+                      <p class="muted">No QR data received yet.</p>
+                    `
+            }
+          </div>
+          <div style="display:flex;justify-content:flex-end;padding-top:0.5rem;">
+            <button class="btn-ghost" @click=${() => this.closeQrModal()}>Close</button>
           </div>
         </div>
+      </div>
+    `;
+  }
+
+  private renderQrCode() {
+    if (this.qrData.startsWith("data:")) {
+      return html`<img src=${this.qrData} style="max-width:280px;image-rendering:pixelated;" alt="QR Code" />`;
+    }
+    try {
+      const el = renderQrToCanvas(this.qrData, 280);
+      return html`${el}`;
+    } catch {
+      return html`<pre class="code-block" style="word-break:break-all;white-space:pre-wrap;font-size:0.7rem;">${this.qrData}</pre>`;
+    }
+  }
+
+  // ── Add Channel Modal ──
+
+  private renderAddModal() {
+    return html`
+      <div class="modal-overlay" @click=${() => this.closeAddModal()}>
+        <div class="modal-card" @click=${(e: Event) => e.stopPropagation()}>
+          <div class="card-header">
+            <span class="card-header__prefix">${icon("plus", { className: "icon-sm" })}</span>
+            <h3 class="card-header__title">Add Channel</h3>
+            <button class="btn-ghost-sm" @click=${() => this.closeAddModal()}>
+              ${icon("x", { className: "icon-xs" })}
+            </button>
+          </div>
+
+          ${this.addSelectedType ? this.renderAddForm() : this.renderTypeGrid()}
+
+          <div style="display:flex;justify-content:flex-end;gap:0.5rem;padding-top:0.5rem;">
+            ${
+              this.addSelectedType
+                ? html`<button class="btn-ghost" @click=${() => {
+                    this.addSelectedType = null;
+                    this.addFormValue = "";
+                  }}>
+                  Back
+                </button>`
+                : nothing
+            }
+            <button class="btn-ghost" @click=${() => this.closeAddModal()}>Cancel</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  private renderTypeGrid() {
+    return html`
+      <div class="channel-type-grid">
+        ${ADD_CHANNEL_TYPES.map(
+          (ct) => html`
+          <div
+            class="channel-type-card ${this.addSelectedType === ct.key ? "channel-type-card--selected" : ""}"
+            @click=${() => this.selectChannelType(ct.key)}
+          >
+            <span style="font-size:1.5rem;">${ct.emoji}</span>
+            ${icon(ct.icon, { className: "icon-sm" })}
+            <span style="font-weight:500;font-size:0.85rem;">${ct.label}</span>
+            <span class="muted" style="font-size:0.72rem;text-align:center;">${ct.description}</span>
+          </div>
+        `,
+        )}
+      </div>
+    `;
+  }
+
+  private renderAddForm() {
+    const ct = ADD_CHANNEL_TYPES.find((t) => t.key === this.addSelectedType);
+    if (!ct) {
+      return nothing;
+    }
+
+    return html`
+      <div style="padding:1rem 0;">
+        <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.75rem;">
+          <span style="font-size:1.25rem;">${ct.emoji}</span>
+          ${icon(ct.icon, { className: "icon-sm" })}
+          <strong>${ct.label}</strong>
+        </div>
+
+        ${
+          ct.key === "whatsapp"
+            ? html`
+            <p class="muted" style="margin-bottom:0.75rem;">WhatsApp connects via QR code scan. Click below to start the pairing process.</p>
+            <button class="btn-ghost" @click=${() => void this.submitAddChannel()} ?disabled=${this.addSaving}>
+              ${icon("key", { className: "icon-xs" })} Start QR Scan
+            </button>
+          `
+            : ct.key === "telegram" || ct.key === "discord"
+              ? html`
+              <label style="display:block;margin-bottom:0.5rem;">
+                <span class="muted" style="font-size:0.82rem;">Bot Token</span>
+                <input
+                  type="text"
+                  class="input"
+                  placeholder="Enter ${ct.label} bot token..."
+                  .value=${this.addFormValue}
+                  @input=${(e: Event) => {
+                    this.addFormValue = (e.target as HTMLInputElement).value;
+                  }}
+                  style="width:100%;margin-top:0.25rem;"
+                />
+              </label>
+              <button
+                class="btn-ghost"
+                @click=${() => void this.submitAddChannel()}
+                ?disabled=${this.addSaving || !this.addFormValue.trim()}
+              >
+                ${this.addSaving ? icon("loader", { className: "icon-xs icon-spin" }) : icon("check", { className: "icon-xs" })}
+                Save
+              </button>
+            `
+              : html`
+              <label style="display:block;margin-bottom:0.5rem;">
+                <span class="muted" style="font-size:0.82rem;">Configuration (JSON)</span>
+                <textarea
+                  class="input"
+                  rows="6"
+                  placeholder='{"key": "value"}'
+                  .value=${this.addFormValue}
+                  @input=${(e: Event) => {
+                    this.addFormValue = (e.target as HTMLTextAreaElement).value;
+                  }}
+                  style="width:100%;margin-top:0.25rem;font-family:var(--lg-font-mono);font-size:0.82rem;resize:vertical;"
+                ></textarea>
+              </label>
+              <button
+                class="btn-ghost"
+                @click=${() => void this.submitAddChannel()}
+                ?disabled=${this.addSaving || !this.addFormValue.trim()}
+              >
+                ${this.addSaving ? icon("loader", { className: "icon-xs icon-spin" }) : icon("check", { className: "icon-xs" })}
+                Save
+              </button>
+            `
+        }
       </div>
     `;
   }
@@ -252,9 +594,9 @@ export class ChannelsView extends LitElement {
         <empty-state
           icon="radio"
           heading="No Channels"
-          message="No channels configured. Add channel configuration in the Config view."
-          actionLabel="Refresh"
-          @action=${() => void this.refresh()}
+          message="No channels configured. Use the Add Channel button to get started."
+          actionLabel="Add Channel"
+          @action=${() => this.openAddModal()}
         ></empty-state>
       `;
     }
@@ -270,6 +612,8 @@ export class ChannelsView extends LitElement {
           const channelBindings = this.getBindingsForChannel(key);
           const configExpanded = this.expandedConfigs.has(key);
           const channelConfig = this.channelConfigs.get(key);
+          const isEditing = this.editingConfigs.has(key);
+          const isSaving = this.savingConfig.has(key);
 
           return html`
             <div class="glass-dashboard-card channel-card ${isEnabled ? "" : "channel-card--disabled"}">
@@ -349,9 +693,34 @@ export class ChannelsView extends LitElement {
                   ? html`
                 ${
                   channelConfig
-                    ? html`
-                  <json-viewer .data=${channelConfig} .expanded=${true} .maxDepth=${4}></json-viewer>
-                `
+                    ? isEditing
+                      ? html`
+                        <div style="margin-top:0.5rem;">
+                          <textarea
+                            class="input"
+                            rows="10"
+                            .value=${this.editingConfigs.get(key) ?? ""}
+                            @input=${(e: Event) => this.updateEditingConfig(key, (e.target as HTMLTextAreaElement).value)}
+                            style="width:100%;font-family:var(--lg-font-mono);font-size:0.82rem;resize:vertical;"
+                          ></textarea>
+                          <div style="display:flex;gap:0.5rem;margin-top:0.5rem;">
+                            <button class="btn-ghost-sm" @click=${() => void this.saveChannelConfig(key)} ?disabled=${isSaving}>
+                              ${isSaving ? icon("loader", { className: "icon-xs icon-spin" }) : icon("check", { className: "icon-xs" })} Save
+                            </button>
+                            <button class="btn-ghost-sm" @click=${() => this.cancelEditingConfig(key)} ?disabled=${isSaving}>
+                              ${icon("x", { className: "icon-xs" })} Cancel
+                            </button>
+                          </div>
+                        </div>
+                      `
+                      : html`
+                        <div style="margin-top:0.5rem;">
+                          <json-viewer .data=${channelConfig} .expanded=${true} .maxDepth=${4}></json-viewer>
+                          <button class="btn-ghost-sm" style="margin-top:0.5rem;" @click=${() => this.startEditingConfig(key)}>
+                            ${icon("edit", { className: "icon-xs" })} Edit
+                          </button>
+                        </div>
+                      `
                     : nothing
                 }
                 ${

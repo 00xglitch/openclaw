@@ -38,3 +38,16 @@ export async function loadSessions(
   });
   return result ?? { count: 0, sessions: [] };
 }
+
+export async function loadAgentSessions(
+  request: GatewayRequest,
+  agentId: string,
+  limit = 20,
+): Promise<SessionsListResult> {
+  const result = await request<SessionsListResult>("sessions.list", {
+    agentId,
+    limit,
+    includeDerivedTitles: true,
+  });
+  return result ?? { count: 0, sessions: [] };
+}

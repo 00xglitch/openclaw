@@ -1,6 +1,7 @@
 import { consume } from "@lit/context";
 import { LitElement, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
+import { repeat } from "lit/directives/repeat.js";
 import { icon } from "../components/icons.js";
 import { gatewayContext, type GatewayState } from "../context/gateway-context.js";
 import { loadLogsTail } from "../controllers/logs.js";
@@ -18,8 +19,8 @@ const LEVEL_COLORS: Record<string, string> = {
   debug: "var(--muted)",
   info: "var(--text)",
   warn: "var(--warn)",
-  error: "#ef4444",
-  fatal: "#dc2626",
+  error: "var(--danger)",
+  fatal: "var(--danger)",
 };
 
 @customElement("logs-view")
@@ -39,6 +40,7 @@ export class LogsView extends LitElement {
   @state() private autoFollow = true;
   @state() private streaming = false;
   @state() private subsystemFilter = "";
+  @state() private sortNewestFirst = true;
   @state() private levelFilters: Record<string, boolean> = {
     trace: false,
     debug: false,
@@ -138,7 +140,7 @@ export class LogsView extends LitElement {
   }
 
   private get filteredEntries(): LogEntry[] {
-    return this.entries.filter((e) => {
+    const filtered = this.entries.filter((e) => {
       const level = (e.level ?? "info").toLowerCase();
       if (!this.levelFilters[level]) {
         return false;
@@ -159,6 +161,14 @@ export class LogsView extends LitElement {
       }
       return true;
     });
+    if (this.sortNewestFirst) {
+      return filtered.slice().toSorted((a, b) => {
+        const ta = a.time ? new Date(a.time).getTime() : 0;
+        const tb = b.time ? new Date(b.time).getTime() : 0;
+        return tb - ta;
+      });
+    }
+    return filtered;
   }
 
   private get availableSubsystems(): string[] {
@@ -250,6 +260,12 @@ export class LogsView extends LitElement {
             `,
             )}
           </div>
+          <button class="btn-ghost-sm" @click=${() => {
+            this.sortNewestFirst = !this.sortNewestFirst;
+          }}>
+            ${icon("arrowDown", { className: "icon-xs" })}
+            ${this.sortNewestFirst ? "Newest First" : "Oldest First"}
+          </button>
           <label class="view-checkbox">
             <input type="checkbox" .checked=${this.autoFollow}
               @change=${(e: Event) => {
@@ -278,10 +294,13 @@ export class LogsView extends LitElement {
               </tr>
             </thead>
             <tbody>
-              ${entries.map((e) => {
-                const level = (e.level ?? "info").toLowerCase();
-                const color = LEVEL_COLORS[level] ?? "var(--text)";
-                return html`
+              ${repeat(
+                entries,
+                (_e, index) => index,
+                (e) => {
+                  const level = (e.level ?? "info").toLowerCase();
+                  const color = LEVEL_COLORS[level] ?? "var(--text)";
+                  return html`
                   <tr class="log-row" style="color:${color}">
                     <td class="log-time">${this.formatTime(e.time)}</td>
                     <td><span class="log-level" style="color:${color}">${level}</span></td>
@@ -289,7 +308,8 @@ export class LogsView extends LitElement {
                     <td class="log-msg">${e.msg ?? e.raw}</td>
                   </tr>
                 `;
-              })}
+                },
+              )}
               ${
                 entries.length === 0
                   ? html`

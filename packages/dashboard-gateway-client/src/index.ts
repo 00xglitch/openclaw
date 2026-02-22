@@ -402,6 +402,17 @@ export class DashboardGatewayClient {
       if (this.ws === ws) {
         this.ws = null;
       }
+      const reason = (event.reason || "").toLowerCase();
+      if (
+        event.code === 4003 ||
+        reason.includes("pending") ||
+        reason.includes("approval") ||
+        reason.includes("not paired")
+      ) {
+        console.warn(
+          "[openclaw-gateway] Device needs approval — waiting for operator to approve the pairing request",
+        );
+      }
       this.options.onClose?.(event);
       for (const pending of this.pending.values()) {
         pending.reject(new Error(`gateway disconnected (${event.code})`));
@@ -411,7 +422,10 @@ export class DashboardGatewayClient {
         return;
       }
       const wait = this.backoffMs;
-      this.backoffMs = Math.min(10_000, Math.round(this.backoffMs * 1.75));
+      this.backoffMs = Math.min(30_000, Math.round(this.backoffMs * 1.75));
+      if (this.options.token) {
+        console.info("[openclaw-gateway] Reconnecting with stored credentials...");
+      }
       this.reconnectTimer = window.setTimeout(() => {
         this.reconnectTimer = null;
         this.connect();
@@ -554,6 +568,7 @@ export class DashboardGatewayClient {
           .includes("device token mismatch");
 
         if (deviceIdentity && (canFallbackToShared || isDeviceTokenMismatch)) {
+          console.warn("[openclaw-gateway] Device token mismatch, requesting new pairing");
           clearDeviceAuthToken({
             deviceId: deviceIdentity.deviceId,
             role,
