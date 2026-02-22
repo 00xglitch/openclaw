@@ -19,6 +19,7 @@ import {
   type ChatContentBlock,
   type ChatAttachment,
 } from "../controllers/chat.js";
+import { loadAgentSessions, type SessionSummary } from "../controllers/sessions.js";
 import type { AgentProfile } from "../lib/agent-profiles.js";
 import { modelTag } from "../lib/agent-theme.js";
 import { InputHistory } from "../lib/input-history.js";
@@ -202,6 +203,14 @@ export class AgentChat extends LitElement {
   // Scroll
   @state() private showScrollPill = false;
 
+  // Dynamic starters
+  @state() private dynamicStarters: StarterCard[] = [];
+
+  // Sessions
+  @state() private agentSessions: SessionSummary[] = [];
+  @state() private activeSessionKey: string | null = null;
+  @state() private sessionDropdownOpen = false;
+
   // (starter cards send immediately — no expansion state needed)
 
   private prevEventSeq = -1;
@@ -216,20 +225,48 @@ export class AgentChat extends LitElement {
   private recognition: any = null;
 
   private get sessionKey(): string {
+    if (this.activeSessionKey) {
+      return this.activeSessionKey;
+    }
     return this.agent?.id ?? "agent:main:main";
   }
 
   private get suggestedStarters(): StarterCard[] {
-    if (!this.agent?.duties) {
-      return [];
-    }
     const out: StarterCard[] = [];
-    for (const duty of this.agent.duties) {
-      const card = DUTY_STARTERS[duty];
-      if (card && out.length < 4) {
-        out.push(card);
+
+    // Dynamic starters first (up to 2)
+    for (const ds of this.dynamicStarters) {
+      if (out.length < 2) {
+        out.push(ds);
       }
     }
+
+    // Fill with duty-based starters (up to 4 total)
+    if (this.agent?.duties) {
+      for (const duty of this.agent.duties) {
+        const card = DUTY_STARTERS[duty];
+        if (card && out.length < 4) {
+          out.push(card);
+        }
+      }
+    }
+
+    // Fallback: if still empty, add generic starters
+    if (out.length === 0) {
+      out.push(
+        {
+          label: "What can you do?",
+          prompt: "What can you help me with? Give me a quick overview.",
+          icon: "\u{1F4AC}",
+        },
+        {
+          label: "Start a task",
+          prompt: "Help me get started \u2014 ask what I need done.",
+          icon: "\u{1F4DD}",
+        },
+      );
+    }
+
     return out;
   }
 
@@ -245,6 +282,17 @@ export class AgentChat extends LitElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
+    try {
+      const stored = JSON.parse(localStorage.getItem("openclaw.chat.sessions") ?? "{}") as Record<
+        string,
+        string
+      >;
+      if (stored[this.agent?.id]) {
+        this.activeSessionKey = stored[this.agent.id];
+      }
+    } catch {
+      /* ignore */
+    }
     this.pinnedMessages = new PinnedMessages(this.sessionKey);
     void this.loadData();
   }
@@ -285,11 +333,106 @@ export class AgentChat extends LitElement {
       if (this.agent?.model) {
         updateSession(this.gateway.request, this.sessionKey, this.agent.model).catch(() => {});
       }
+
+      void this.loadDynamicStarters();
+      void this.loadAgentSessions();
     } catch (err) {
       this.errorText = err instanceof Error ? err.message : String(err);
     } finally {
       this.loading = false;
     }
+  }
+
+  private async loadDynamicStarters(): Promise<void> {
+    if (!this.gateway?.connected || !this.agent) {
+      return;
+    }
+    const starters: StarterCard[] = [];
+
+    // Try to get agent skills
+    try {
+      const skills = await this.gateway.request<Array<{ name: string; description?: string }>>(
+        "skills.status",
+        { agentId: this.agent.id },
+      );
+      if (Array.isArray(skills)) {
+        for (const skill of skills.slice(0, 2)) {
+          starters.push({
+            label: skill.name,
+            prompt: skill.description ?? `Run the ${skill.name} skill`,
+            icon: "\u26A1",
+          });
+        }
+      }
+    } catch {
+      /* skills not available */
+    }
+
+    this.dynamicStarters = starters;
+  }
+
+  private async loadAgentSessions(): Promise<void> {
+    if (!this.gateway?.connected || !this.agent) {
+      return;
+    }
+    try {
+      const result = await loadAgentSessions(this.gateway.request, this.agent.id);
+      this.agentSessions = result.sessions;
+    } catch {
+      // non-critical
+    }
+  }
+
+  private switchSession(key: string): void {
+    this.activeSessionKey = key;
+    this.sessionDropdownOpen = false;
+    // Persist per-agent in localStorage
+    try {
+      const stored = JSON.parse(localStorage.getItem("openclaw.chat.sessions") ?? "{}") as Record<
+        string,
+        string
+      >;
+      stored[this.agent.id] = key;
+      localStorage.setItem("openclaw.chat.sessions", JSON.stringify(stored));
+    } catch {
+      /* ignore */
+    }
+    // Reload chat for this session
+    this.messages = [];
+    this.historyCount = 0;
+    void this.loadData();
+  }
+
+  private createNewSession(): void {
+    this.activeSessionKey = null;
+    this.sessionDropdownOpen = false;
+    try {
+      const stored = JSON.parse(localStorage.getItem("openclaw.chat.sessions") ?? "{}") as Record<
+        string,
+        string
+      >;
+      delete stored[this.agent.id];
+      localStorage.setItem("openclaw.chat.sessions", JSON.stringify(stored));
+    } catch {
+      /* ignore */
+    }
+    this.messages = [];
+    this.historyCount = 0;
+    void this.loadData();
+  }
+
+  private formatSessionAge(ts: number): string {
+    const diff = Date.now() - ts;
+    if (diff < 60_000) {
+      return "now";
+    }
+    if (diff < 3600_000) {
+      return `${Math.floor(diff / 60_000)}m`;
+    }
+    if (diff < 86400_000) {
+      return `${Math.floor(diff / 3600_000)}h`;
+    }
+    return `${Math.floor(diff / 86400_000)}d`;
   }
 
   /* ── Chat event handling ───────────────────────────── */
@@ -710,40 +853,48 @@ export class AgentChat extends LitElement {
       (window as unknown as Record<string, unknown>).webkitSpeechRecognition ??
       (window as unknown as Record<string, unknown>).SpeechRecognition;
     if (!SR) {
+      this.errorText = "Speech recognition not available in this browser";
       return;
     }
 
-    // Web Speech API types not in all TS configs
-    const recognition = new (SR as new () => Record<string, unknown>)();
-    recognition.continuous = false;
-    recognition.interimResults = true;
-    recognition.lang = "en-US";
+    try {
+      const recognition = new (SR as new () => Record<string, unknown>)();
+      recognition.continuous = false;
+      recognition.interimResults = true;
+      recognition.lang = navigator.language || "en-US";
 
-    recognition.onresult = (event: Record<string, unknown>) => {
-      let transcript = "";
-      const results = (
-        event as { results: { length: number; [i: number]: { 0: { transcript: string } } } }
-      ).results;
-      for (let i = 0; i < results.length; i++) {
-        transcript += results[i][0].transcript;
-      }
-      this.message = transcript;
-      this.syncTextarea();
-    };
+      recognition.onresult = (event: Record<string, unknown>) => {
+        let transcript = "";
+        const results = (
+          event as { results: { length: number; [i: number]: { 0: { transcript: string } } } }
+        ).results;
+        for (let i = 0; i < results.length; i++) {
+          transcript += results[i][0].transcript;
+        }
+        this.message = transcript;
+        this.syncTextarea();
+      };
 
-    (recognition as unknown as EventTarget).addEventListener("end", () => {
-      this.voiceActive = false;
-      this.recognition = null;
-    });
+      (recognition as unknown as EventTarget).addEventListener("end", () => {
+        this.voiceActive = false;
+        this.recognition = null;
+      });
 
-    (recognition as unknown as EventTarget).addEventListener("error", () => {
-      this.voiceActive = false;
-      this.recognition = null;
-    });
+      (recognition as unknown as EventTarget).addEventListener("error", (ev: Event) => {
+        this.voiceActive = false;
+        this.recognition = null;
+        const errorEvent = ev as unknown as { error?: string };
+        if (errorEvent.error && errorEvent.error !== "aborted") {
+          this.errorText = `Voice error: ${errorEvent.error}`;
+        }
+      });
 
-    (recognition as { start: () => void }).start();
-    this.recognition = recognition;
-    this.voiceActive = true;
+      (recognition as { start: () => void }).start();
+      this.recognition = recognition;
+      this.voiceActive = true;
+    } catch (err) {
+      this.errorText = `Voice failed: ${err instanceof Error ? err.message : String(err)}`;
+    }
   }
 
   private stopVoice(): void {
@@ -896,6 +1047,56 @@ export class AgentChat extends LitElement {
 
     return html`
       <div class="agent-chat" @drop=${this.handleDrop} @dragover=${this.handleDragOver}>
+
+        <!-- Session header -->
+        <div class="agent-chat__session-bar">
+          <div style="position:relative;">
+            <button class="btn-ghost" @click=${() => {
+              this.sessionDropdownOpen = !this.sessionDropdownOpen;
+              if (this.sessionDropdownOpen) {
+                void this.loadAgentSessions();
+              }
+            }}
+              title="Switch session">
+              ${icon("fileText", { className: "icon-xs" })}
+              <span style="font-size:0.8rem;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                ${this.activeSessionKey ? this.activeSessionKey.slice(0, 24) + (this.activeSessionKey.length > 24 ? "..." : "") : "Default session"}
+              </span>
+              ${icon(this.sessionDropdownOpen ? "chevronUp" : "chevronDown", { className: "icon-xs" })}
+            </button>
+            ${
+              this.sessionDropdownOpen
+                ? html`
+              <div class="agent-chat__session-dropdown">
+                <button class="agent-chat__session-item agent-chat__session-item--new" @click=${() => this.createNewSession()}>
+                  ${icon("plus", { className: "icon-xs" })} New Session
+                </button>
+                ${this.agentSessions.map(
+                  (s) => html`
+                  <button class="agent-chat__session-item ${s.key === this.sessionKey ? "agent-chat__session-item--active" : ""}"
+                    @click=${() => this.switchSession(s.key)}>
+                    <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                      ${s.label ?? s.derivedTitle ?? s.key.slice(0, 30)}
+                    </span>
+                    <span class="muted" style="font-size:0.7rem;flex-shrink:0;">
+                      ${s.updatedAt ? this.formatSessionAge(s.updatedAt) : ""}
+                    </span>
+                  </button>
+                `,
+                )}
+                ${
+                  this.agentSessions.length === 0
+                    ? html`
+                        <div class="muted" style="padding: 8px 12px; font-size: 0.8rem">No sessions yet</div>
+                      `
+                    : nothing
+                }
+              </div>
+            `
+                : nothing
+            }
+          </div>
+        </div>
 
         <!-- Search overlay -->
         ${
@@ -1077,15 +1278,12 @@ export class AgentChat extends LitElement {
               ${icon("paperclip", { className: "icon-sm" })}
             </button>
 
-            ${
-              hasVoice
-                ? html`
-                  <button class="agent-chat__input-btn ${this.voiceActive ? "agent-chat__input-btn--recording" : ""}" @click=${() => this.toggleVoice()} title=${this.voiceActive ? "Stop recording" : "Voice input"}>
-                    ${icon(this.voiceActive ? "micOff" : "mic", { className: "icon-sm" })}
-                  </button>
-                `
-                : nothing
-            }
+            <button class="agent-chat__input-btn ${this.voiceActive ? "agent-chat__input-btn--recording" : ""}"
+              @click=${() => this.toggleVoice()}
+              title=${hasVoice ? (this.voiceActive ? "Stop recording" : "Voice input") : "Speech not available"}
+              ?disabled=${!hasVoice || !g.connected}>
+              ${icon(this.voiceActive ? "micOff" : "mic", { className: "icon-sm" })}
+            </button>
 
             <textarea
               .value=${this.message}

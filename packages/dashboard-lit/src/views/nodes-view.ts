@@ -1,6 +1,8 @@
 import { consume } from "@lit/context";
 import { LitElement, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
+import "../components/confirm-dialog.js";
+import "../components/empty-state.js";
 import { icon } from "../components/icons.js";
 import { gatewayContext, type GatewayState } from "../context/gateway-context.js";
 
@@ -20,6 +22,7 @@ type DeviceEntry = {
   family?: string;
   role?: string;
   pairedAt?: number;
+  lastActivity?: number;
 };
 
 @customElement("nodes-view")
@@ -35,6 +38,8 @@ export class NodesView extends LitElement {
   @state() private nodes: NodeEntry[] = [];
   @state() private devices: DeviceEntry[] = [];
   @state() private error = "";
+  @state() private revokeConfirmId: string | null = null;
+  @state() private rejectConfirmId: string | null = null;
 
   private lastConnectedState: boolean | null = null;
 
@@ -188,7 +193,11 @@ export class NodesView extends LitElement {
           ${
             this.nodes.length === 0 && !this.loading
               ? html`
-                  <div class="glass-dashboard-card"><p class="muted">No exec nodes connected.</p></div>
+                  <empty-state
+                    heading="No Exec Nodes"
+                    message="No compute nodes are currently connected."
+                    icon="server"
+                  ></empty-state>
                 `
               : nothing
           }
@@ -211,12 +220,16 @@ export class NodesView extends LitElement {
                 <div class="node-meta">
                   ${d.family ? html`<span class="chip">${d.family}</span>` : nothing}
                   ${d.role ? html`<span class="chip">${d.role}</span>` : nothing}
+                  ${d.pairedAt ? html`<span class="muted">Paired: ${this.formatAge(d.pairedAt)}</span>` : nothing}
+                  ${d.lastActivity ? html`<span class="muted">Last activity: ${this.formatAge(d.lastActivity)}</span>` : nothing}
                 </div>
                 <div class="node-actions">
                   <button class="btn-primary-sm" @click=${() => void this.approveDevice(d.id)}>
                     ${icon("check", { className: "icon-xs" })} Approve
                   </button>
-                  <button class="btn-ghost-sm" @click=${() => void this.rejectDevice(d.id)}>
+                  <button class="btn-ghost-sm" @click=${() => {
+                    this.rejectConfirmId = d.id;
+                  }}>
                     ${icon("x", { className: "icon-xs" })} Reject
                   </button>
                 </div>
@@ -243,12 +256,15 @@ export class NodesView extends LitElement {
                 ${d.family ? html`<span class="chip">${d.family}</span>` : nothing}
                 ${d.role ? html`<span class="chip">${d.role}</span>` : nothing}
                 <span class="muted">Paired: ${this.formatAge(d.pairedAt)}</span>
+                <span class="muted">Last activity: ${this.formatAge(d.lastActivity)}</span>
               </div>
               <div class="node-actions" style="margin-top:8px;display:flex;gap:4px;">
                 <button class="btn-ghost-sm" @click=${() => void this.rotateToken(d.id)} title="Rotate token">
                   ${icon("refresh", { className: "icon-xs" })} Rotate
                 </button>
-                <button class="btn-danger-sm" @click=${() => void this.revokeDevice(d.id)} title="Revoke device">
+                <button class="btn-danger-sm" @click=${() => {
+                  this.revokeConfirmId = d.id;
+                }} title="Revoke device">
                   ${icon("x", { className: "icon-xs" })} Revoke
                 </button>
               </div>
@@ -258,12 +274,50 @@ export class NodesView extends LitElement {
           ${
             pairedDevices.length === 0 && !this.loading
               ? html`
-                  <div class="glass-dashboard-card"><p class="muted">No paired devices.</p></div>
+                  <empty-state
+                    heading="No Paired Devices"
+                    message="No devices have been paired yet."
+                    icon="shield"
+                  ></empty-state>
                 `
               : nothing
           }
         </div>
       </div>
+
+      <confirm-dialog
+        .open=${this.revokeConfirmId !== null}
+        title="Revoke Device"
+        message="This will revoke the device token. The device will need to re-pair."
+        confirmLabel="Revoke"
+        confirmVariant="danger"
+        @confirm=${() => {
+          if (this.revokeConfirmId) {
+            void this.revokeDevice(this.revokeConfirmId);
+            this.revokeConfirmId = null;
+          }
+        }}
+        @cancel=${() => {
+          this.revokeConfirmId = null;
+        }}
+      ></confirm-dialog>
+
+      <confirm-dialog
+        .open=${this.rejectConfirmId !== null}
+        title="Reject Device"
+        message="This will reject the pending device pairing request."
+        confirmLabel="Reject"
+        confirmVariant="danger"
+        @confirm=${() => {
+          if (this.rejectConfirmId) {
+            void this.rejectDevice(this.rejectConfirmId);
+            this.rejectConfirmId = null;
+          }
+        }}
+        @cancel=${() => {
+          this.rejectConfirmId = null;
+        }}
+      ></confirm-dialog>
     `;
   }
 }

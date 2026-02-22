@@ -4,10 +4,12 @@ import { customElement, state } from "lit/decorators.js";
 import { icon } from "../components/icons.js";
 import "../components/status-chip.js";
 import "../components/empty-state.js";
+import "../components/confirm-dialog.js";
 import { gatewayContext, type GatewayState } from "../context/gateway-context.js";
 import { loadPresence, type PresenceEntry } from "../controllers/presence.js";
 
 const ACTIVE_THRESHOLD_MS = 2 * 60_000; // 2 minutes
+const REFRESH_INTERVAL_MS = 15_000; // 15 seconds
 
 @customElement("instances-view")
 export class InstancesView extends LitElement {
@@ -23,9 +25,22 @@ export class InstancesView extends LitElement {
   @state() private error: string | null = null;
   @state() private expandedKeys = new Set<string>();
   @state() private showPairingInfo = false;
+  @state() private waitingForDevice = false;
+  @state() private pairingCopied = false;
+  @state() private lastRefreshedAt: number | null = null;
+  @state() private timeSinceRefresh = "";
+  @state() private disconnectConfirmKey: string | null = null;
 
   private lastConnectedState: boolean | null = null;
   private unsubPresence: (() => void) | null = null;
+  private refreshIntervalId: ReturnType<typeof setInterval> | null = null;
+  private tickIntervalId: ReturnType<typeof setInterval> | null = null;
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    this.startPeriodicRefresh();
+    this.startTickTimer();
+  }
 
   override updated(): void {
     const connected = this.gateway?.connected ?? false;
@@ -41,7 +56,46 @@ export class InstancesView extends LitElement {
 
   override disconnectedCallback(): void {
     this.unsubscribePresence();
+    this.stopPeriodicRefresh();
+    this.stopTickTimer();
     super.disconnectedCallback();
+  }
+
+  private startPeriodicRefresh(): void {
+    this.stopPeriodicRefresh();
+    this.refreshIntervalId = setInterval(() => {
+      void this.refresh();
+    }, REFRESH_INTERVAL_MS);
+  }
+
+  private stopPeriodicRefresh(): void {
+    if (this.refreshIntervalId !== null) {
+      clearInterval(this.refreshIntervalId);
+      this.refreshIntervalId = null;
+    }
+  }
+
+  private startTickTimer(): void {
+    this.stopTickTimer();
+    this.tickIntervalId = setInterval(() => {
+      this.updateTimeSinceRefresh();
+    }, 1000);
+  }
+
+  private stopTickTimer(): void {
+    if (this.tickIntervalId !== null) {
+      clearInterval(this.tickIntervalId);
+      this.tickIntervalId = null;
+    }
+  }
+
+  private updateTimeSinceRefresh(): void {
+    if (!this.lastRefreshedAt) {
+      this.timeSinceRefresh = "";
+      return;
+    }
+    const seconds = Math.floor((Date.now() - this.lastRefreshedAt) / 1000);
+    this.timeSinceRefresh = `${seconds}s ago`;
   }
 
   private subscribeToPresence(): void {
@@ -68,6 +122,8 @@ export class InstancesView extends LitElement {
     this.error = null;
     try {
       this.entries = await loadPresence(this.gateway.request);
+      this.lastRefreshedAt = Date.now();
+      this.updateTimeSinceRefresh();
     } catch (err) {
       this.error = err instanceof Error ? err.message : "Failed to load instances";
     } finally {
@@ -109,6 +165,83 @@ export class InstancesView extends LitElement {
     return `${Math.floor(diff / 86400_000)}d ago`;
   }
 
+  private formatUptime(connectedAt?: number): string {
+    if (!connectedAt) {
+      return "\u2014";
+    }
+    const diff = Date.now() - connectedAt;
+    if (diff < 0) {
+      return "\u2014";
+    }
+    const seconds = Math.floor(diff / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+    if (days > 0) {
+      return `${days}d ${hours % 24}h`;
+    }
+    if (hours > 0) {
+      return `${hours}h ${minutes % 60}m`;
+    }
+    if (minutes > 0) {
+      return `${minutes}m`;
+    }
+    return `${seconds}s`;
+  }
+
+  private getPairingGatewayUrl(): string {
+    if (this.gateway?.gatewayUrl) {
+      return this.gateway.gatewayUrl;
+    }
+    const loc = window.location;
+    const protocol = loc.protocol === "https:" ? "wss:" : "ws:";
+    return `${protocol}//${loc.host}`;
+  }
+
+  private getPairingInfo(): string {
+    const url = this.getPairingGatewayUrl();
+    return `openclaw devices pair --gateway "${url}"`;
+  }
+
+  private handleCopyPairing = (): void => {
+    const info = this.getPairingInfo();
+    navigator.clipboard.writeText(info).catch(() => {});
+    this.pairingCopied = true;
+    setTimeout(() => {
+      this.pairingCopied = false;
+    }, 2000);
+  };
+
+  private handlePairDevice = (): void => {
+    this.showPairingInfo = !this.showPairingInfo;
+    if (this.showPairingInfo) {
+      this.waitingForDevice = false;
+      this.pairingCopied = false;
+    }
+  };
+
+  private handleWaitForDevice = (): void => {
+    this.waitingForDevice = true;
+  };
+
+  private handleDismissPairing = (): void => {
+    this.showPairingInfo = false;
+    this.waitingForDevice = false;
+    this.pairingCopied = false;
+  };
+
+  private async disconnectInstance(key: string): Promise<void> {
+    if (!this.gateway?.connected) {
+      return;
+    }
+    try {
+      await this.gateway.request("instances.disconnect", { key });
+      void this.refresh();
+    } catch (err) {
+      this.error = err instanceof Error ? err.message : "Failed to disconnect instance";
+    }
+  }
+
   private renderDetail(label: string, value: string | undefined) {
     if (!value) {
       return nothing;
@@ -139,19 +272,33 @@ export class InstancesView extends LitElement {
           ${entry.clientVersion ? html`<span class="chip chip--muted">v${entry.clientVersion}</span>` : nothing}
         </div>
         <div class="instance-times">
+          <span class="muted">Last seen: ${this.formatAge(entry.lastActiveAt)}</span>
           <span class="muted">Connected: ${this.formatAge(entry.connectedAt)}</span>
-          <span class="muted">Last active: ${this.formatAge(entry.lastActiveAt)}</span>
+          <span class="muted">Uptime: ${this.formatUptime(entry.connectedAt)}</span>
         </div>
-        ${
-          hasDetails
-            ? html`
-          <button class="btn-ghost-sm" @click=${() => this.toggleExpanded(entry.key)}>
-            ${icon(expanded ? "chevronUp" : "chevronDown", { className: "icon-xs" })}
-            ${expanded ? "Hide details" : "Show details"}
-          </button>
-        `
-            : nothing
-        }
+        <div class="instance-actions">
+          ${
+            hasDetails
+              ? html`
+            <button class="btn-ghost-sm" @click=${() => this.toggleExpanded(entry.key)}>
+              ${icon(expanded ? "chevronUp" : "chevronDown", { className: "icon-xs" })}
+              ${expanded ? "Hide details" : "Show details"}
+            </button>
+          `
+              : nothing
+          }
+          ${
+            connected
+              ? html`
+            <button class="btn-ghost-sm btn-ghost-sm--danger" @click=${() => {
+              this.disconnectConfirmKey = entry.key;
+            }}>
+              ${icon("x", { className: "icon-xs" })} Disconnect
+            </button>
+          `
+              : nothing
+          }
+        </div>
         ${
           expanded && hasDetails
             ? html`
@@ -175,9 +322,12 @@ export class InstancesView extends LitElement {
         <div class="view-header">
           <h2 class="view-title">${icon("radio", { className: "icon-sm" })} Instances</h2>
           <div class="view-actions">
-            <button class="btn-ghost" @click=${() => {
-              this.showPairingInfo = !this.showPairingInfo;
-            }}>
+            ${
+              this.timeSinceRefresh
+                ? html`<span class="muted text-xs">Last updated: ${this.timeSinceRefresh}</span>`
+                : nothing
+            }
+            <button class="btn-ghost" @click=${this.handlePairDevice}>
               ${icon("plus", { className: "icon-xs" })} Pair Device
             </button>
             <button class="btn-ghost" @click=${() => void this.refresh()} ?disabled=${this.loading}>
@@ -195,13 +345,36 @@ export class InstancesView extends LitElement {
               <h3 class="card-header__title">Pair a New Device</h3>
             </div>
             <p class="muted">
-              Use <code>openclaw devices pair</code> on the device you want to connect.
+              Run the following command on the device you want to connect:
             </p>
-            <button class="btn-ghost-sm" @click=${() => {
-              this.showPairingInfo = false;
-            }}>
-              Dismiss
-            </button>
+            <div class="pairing-command">
+              <code class="pairing-command__text">${this.getPairingInfo()}</code>
+              <button class="btn-ghost-sm" @click=${this.handleCopyPairing}>
+                ${icon(this.pairingCopied ? "check" : "copy", { className: "icon-xs" })}
+                ${this.pairingCopied ? "Copied!" : "Copy"}
+              </button>
+            </div>
+            <div class="pairing-details muted">
+              <div><strong>Gateway URL:</strong> <code>${this.getPairingGatewayUrl()}</code></div>
+            </div>
+            <div class="instance-actions" style="margin-top: 0.5rem;">
+              ${
+                this.waitingForDevice
+                  ? html`
+                <span class="muted">
+                  ${icon("loader", { className: "icon-xs icon-spin" })} Waiting for device...
+                </span>
+              `
+                  : html`
+                <button class="btn-ghost-sm" @click=${this.handleWaitForDevice}>
+                  ${icon("clock", { className: "icon-xs" })} Wait for device
+                </button>
+              `
+              }
+              <button class="btn-ghost-sm" @click=${this.handleDismissPairing}>
+                Dismiss
+              </button>
+            </div>
           </div>
         `
             : nothing
@@ -247,6 +420,23 @@ export class InstancesView extends LitElement {
             : nothing
         }
       </div>
+
+      <confirm-dialog
+        .open=${this.disconnectConfirmKey !== null}
+        title="Disconnect Instance"
+        message="This will forcefully disconnect the instance. It may automatically reconnect."
+        confirmLabel="Disconnect"
+        confirmVariant="danger"
+        @confirm=${() => {
+          if (this.disconnectConfirmKey) {
+            void this.disconnectInstance(this.disconnectConfirmKey);
+            this.disconnectConfirmKey = null;
+          }
+        }}
+        @cancel=${() => {
+          this.disconnectConfirmKey = null;
+        }}
+      ></confirm-dialog>
     `;
   }
 }

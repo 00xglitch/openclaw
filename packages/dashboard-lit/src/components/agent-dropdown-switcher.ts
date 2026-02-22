@@ -15,6 +15,7 @@ export class AgentDropdownSwitcher extends LitElement {
   @property({ type: Array }) agents: AgentProfile[] = [];
   @property({ type: String }) selectedId: string | null = null;
   @property({ type: Boolean }) compact = false;
+  @property({ type: Object }) spawnConfig: Record<string, string> = {};
 
   @state() private open = false;
   @state() private search = "";
@@ -68,16 +69,47 @@ export class AgentDropdownSwitcher extends LitElement {
   }
 
   private get filteredAgents(): AgentProfile[] {
-    if (!this.search.trim()) {
-      return this.agents;
+    const base = this.search.trim()
+      ? (() => {
+          const q = this.search.toLowerCase();
+          return this.agents.filter(
+            (a) =>
+              a.name.toLowerCase().includes(q) ||
+              a.personality.toLowerCase().includes(q) ||
+              a.duties.some((d) => d.toLowerCase().includes(q)),
+          );
+        })()
+      : this.agents;
+
+    // Group: parents first, then their subagents indented below
+    if (!this.spawnConfig || Object.keys(this.spawnConfig).length === 0) {
+      return base;
     }
-    const q = this.search.toLowerCase();
-    return this.agents.filter(
-      (a) =>
-        a.name.toLowerCase().includes(q) ||
-        a.personality.toLowerCase().includes(q) ||
-        a.duties.some((d) => d.toLowerCase().includes(q)),
-    );
+
+    const childToParent = this.spawnConfig;
+    const childIds = new Set(Object.keys(childToParent));
+    const parents = base.filter((a) => !childIds.has(a.id));
+    const grouped: AgentProfile[] = [];
+
+    for (const parent of parents) {
+      grouped.push(parent);
+      const children = base.filter((a) => childToParent[a.id] === parent.id);
+      grouped.push(...children);
+    }
+
+    // Append any orphan children whose parent wasn't in the filtered list
+    const added = new Set(grouped.map((a) => a.id));
+    for (const agent of base) {
+      if (!added.has(agent.id)) {
+        grouped.push(agent);
+      }
+    }
+
+    return grouped;
+  }
+
+  private isSubagent(agentId: string): boolean {
+    return this.spawnConfig != null && agentId in this.spawnConfig;
   }
 
   private get selected(): AgentProfile | null {
@@ -160,11 +192,20 @@ export class AgentDropdownSwitcher extends LitElement {
                     const color = agentColor(agent);
                     const isActive = agent.id === this.selectedId;
                     const mt = modelTag(agent.model);
+                    const isSub = this.isSubagent(agent.id);
                     return html`
                       <button
-                        class="agent-dropdown__item ${isActive ? "agent-dropdown__item--active" : ""}"
+                        class="agent-dropdown__item ${isActive ? "agent-dropdown__item--active" : ""} ${isSub ? "agent-dropdown__item--subagent" : ""}"
+                        style="${isSub ? "padding-left:24px;" : ""}"
                         @click=${() => this.select(agent.id)}
                       >
+                        ${
+                          isSub
+                            ? html`
+                                <span class="agent-dropdown__connector"></span>
+                              `
+                            : nothing
+                        }
                         <span class="agent-dropdown__accent" style="background:${color}"></span>
                         <agent-avatar .agent=${agent} .size=${24}></agent-avatar>
                         <span class="agent-dropdown__item-name">${agent.name}</span>
