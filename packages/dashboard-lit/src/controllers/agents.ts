@@ -4,6 +4,11 @@ export type AgentInfo = {
   id: string;
   name?: string;
   identity?: { name?: string; emoji?: string };
+  model?: string;
+  skills?: string[];
+  sandbox?: string;
+  heartbeat?: { enabled?: boolean; intervalMs?: number };
+  tools?: Record<string, unknown>;
 };
 
 export type AgentsListResult = {

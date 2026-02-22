@@ -16,6 +16,18 @@ import "./components/agent-panel.js";
 import "./views/overview-view.js";
 import "./views/chat-view.js";
 import "./views/placeholder-view.js";
+import "./views/sessions-view.js";
+import "./views/channels-view.js";
+import "./views/instances-view.js";
+import "./views/agents-view.js";
+import "./views/skills-view.js";
+import "./views/cron-view.js";
+import "./views/usage-view.js";
+import "./views/nodes-view.js";
+import "./views/config-view.js";
+import "./views/debug-view.js";
+import "./views/logs-view.js";
+import "./views/settings-view.js";
 
 declare global {
   interface Window {
@@ -196,6 +208,54 @@ export class DashboardApp extends LitElement {
       case "chat":
         return html`
           <agent-panel mode="fullpage"></agent-panel>
+        `;
+      case "sessions":
+        return html`
+          <sessions-view></sessions-view>
+        `;
+      case "channels":
+        return html`
+          <channels-view></channels-view>
+        `;
+      case "instances":
+        return html`
+          <instances-view></instances-view>
+        `;
+      case "agents":
+        return html`
+          <agents-view></agents-view>
+        `;
+      case "skills":
+        return html`
+          <skills-view></skills-view>
+        `;
+      case "cron":
+        return html`
+          <cron-view></cron-view>
+        `;
+      case "usage":
+        return html`
+          <usage-view></usage-view>
+        `;
+      case "nodes":
+        return html`
+          <nodes-view></nodes-view>
+        `;
+      case "config":
+        return html`
+          <config-view></config-view>
+        `;
+      case "debug":
+        return html`
+          <debug-view></debug-view>
+        `;
+      case "logs":
+        return html`
+          <logs-view></logs-view>
+        `;
+      case "settings":
+        return html`
+          <settings-view></settings-view>
         `;
       default:
         return html`<placeholder-view .tab=${this.tab}></placeholder-view>`;

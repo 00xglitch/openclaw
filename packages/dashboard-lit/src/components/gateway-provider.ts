@@ -39,6 +39,7 @@ export class GatewayProvider extends LitElement {
   private gatewayUrl = resolveDefaultGatewayUrl();
   private sharedSecret = "";
   private password = "";
+  private eventListeners = new Map<string, Set<(payload: unknown) => void>>();
 
   override connectedCallback(): void {
     super.connectedCallback();
@@ -118,6 +119,12 @@ export class GatewayProvider extends LitElement {
       },
       onEvent: (event) => {
         this.lastEvent = event;
+        const subs = this.eventListeners.get(event.event);
+        if (subs) {
+          for (const cb of subs) {
+            cb(event.payload);
+          }
+        }
       },
       onClose: (event) => {
         this.connected = false;
@@ -182,6 +189,20 @@ export class GatewayProvider extends LitElement {
       },
       reconnect: this.reconnect,
       retryNow: this.retryNow,
+      subscribe: (eventType: string, callback: (payload: unknown) => void) => {
+        let subs = this.eventListeners.get(eventType);
+        if (!subs) {
+          subs = new Set();
+          this.eventListeners.set(eventType, subs);
+        }
+        subs.add(callback);
+        return () => {
+          subs.delete(callback);
+          if (subs.size === 0) {
+            this.eventListeners.delete(eventType);
+          }
+        };
+      },
     };
   }
 
