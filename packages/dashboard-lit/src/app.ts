@@ -2,6 +2,7 @@ import { LitElement, html } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { icon, type IconName } from "./components/icons.js";
 import "./components/connection-status.js";
+import { debounce } from "./lib/debounce.js";
 import {
   normalizeBasePath,
   pathForTab,
@@ -28,6 +29,8 @@ import "./views/config-view.js";
 import "./views/debug-view.js";
 import "./views/logs-view.js";
 import "./views/settings-view.js";
+import "./views/workflows-view.js";
+import "./views/retros-view.js";
 
 declare global {
   interface Window {
@@ -150,13 +153,13 @@ export class DashboardApp extends LitElement {
     localStorage.setItem(NAV_COLLAPSED_KEY, String(this.navCollapsed));
   }
 
-  private handleResize = (): void => {
+  private handleResize = debounce(() => {
     const wasMobile = this.isMobile;
     this.isMobile = window.innerWidth < 768;
     if (this.isMobile && !wasMobile) {
       requestAnimationFrame(() => this.scrollToContent());
     }
-  };
+  }, 150);
 
   /* ── Theme ───────────────────────────────────────── */
 
@@ -256,6 +259,14 @@ export class DashboardApp extends LitElement {
       case "settings":
         return html`
           <settings-view></settings-view>
+        `;
+      case "workflows":
+        return html`
+          <workflows-view></workflows-view>
+        `;
+      case "retros":
+        return html`
+          <retros-view></retros-view>
         `;
       default:
         return html`<placeholder-view .tab=${this.tab}></placeholder-view>`;

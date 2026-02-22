@@ -1,5 +1,5 @@
 import { consume } from "@lit/context";
-import { LitElement, html, nothing } from "lit";
+import { LitElement, html, nothing, type TemplateResult } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { icon } from "../components/icons.js";
 import "../components/json-viewer.js";
@@ -27,6 +27,9 @@ const CONFIG_SECTIONS: ConfigSection[] = [
   { key: "logging", label: "Logging", icon: "scrollText" },
 ];
 
+/** Max nesting depth for recursive form fields before falling back to json-viewer */
+const MAX_FORM_DEPTH = 2;
+
 @customElement("config-view")
 export class ConfigView extends LitElement {
   override createRenderRoot() {
@@ -49,6 +52,8 @@ export class ConfigView extends LitElement {
   @state() private patchPath = "";
   @state() private patchValue = "";
   @state() private patching = false;
+  @state() private editedValues: Record<string, unknown> = {};
+  @state() private sectionSaving = false;
 
   private lastConnectedState: boolean | null = null;
 
@@ -267,12 +272,279 @@ export class ConfigView extends LitElement {
     `;
   }
 
+  /** Get the effective value for a dot-path, checking editedValues first, then original config */
+  private getEffectiveValue(dotPath: string): unknown {
+    if (dotPath in this.editedValues) {
+      return this.editedValues[dotPath];
+    }
+    const parts = dotPath.split(".");
+    let current: unknown = this.configJson;
+    for (const part of parts) {
+      if (current === null || current === undefined || typeof current !== "object") {
+        return undefined;
+      }
+      current = (current as Record<string, unknown>)[part];
+    }
+    return current;
+  }
+
+  /** Get the original (non-edited) value for a dot-path */
+  private getOriginalValue(dotPath: string): unknown {
+    const parts = dotPath.split(".");
+    let current: unknown = this.configJson;
+    for (const part of parts) {
+      if (current === null || current === undefined || typeof current !== "object") {
+        return undefined;
+      }
+      current = (current as Record<string, unknown>)[part];
+    }
+    return current;
+  }
+
+  /** Check if a section has any pending edits */
+  private sectionHasEdits(sectionKey: string): boolean {
+    const prefix = sectionKey + ".";
+    return Object.keys(this.editedValues).some((k) => k === sectionKey || k.startsWith(prefix));
+  }
+
+  /** Get all edited paths for a section */
+  private getSectionEditedPaths(sectionKey: string): string[] {
+    const prefix = sectionKey + ".";
+    return Object.keys(this.editedValues).filter((k) => k === sectionKey || k.startsWith(prefix));
+  }
+
+  /** Revert all edits for the active section */
+  private revertSection = (): void => {
+    const paths = this.getSectionEditedPaths(this.activeSection);
+    const next = { ...this.editedValues };
+    for (const p of paths) {
+      delete next[p];
+    }
+    this.editedValues = next;
+  };
+
+  /** Save all edited values for the active section via config.patch */
+  private saveSectionEdits = (): void => {
+    void this._saveSectionEdits();
+  };
+
+  private async _saveSectionEdits(): Promise<void> {
+    if (!this.gateway?.connected || this.sectionSaving) {
+      return;
+    }
+    const paths = this.getSectionEditedPaths(this.activeSection);
+    if (paths.length === 0) {
+      return;
+    }
+
+    this.sectionSaving = true;
+    this.error = "";
+    this.saveMessage = "";
+    try {
+      for (const path of paths) {
+        await this.gateway.request("config.patch", {
+          path,
+          value: this.editedValues[path],
+        });
+      }
+      // Clear saved edits
+      const next = { ...this.editedValues };
+      for (const p of paths) {
+        delete next[p];
+      }
+      this.editedValues = next;
+      this.saveMessage = `Saved ${paths.length} change${paths.length > 1 ? "s" : ""} to ${this.activeSection}`;
+      void this.refresh();
+    } catch (err) {
+      this.error = err instanceof Error ? err.message : String(err);
+    } finally {
+      this.sectionSaving = false;
+      setTimeout(() => {
+        this.saveMessage = "";
+      }, 3000);
+    }
+  }
+
+  /** Handle a field value change */
+  private handleFieldChange = (dotPath: string, value: unknown): void => {
+    const original = this.getOriginalValue(dotPath);
+    // If value matches original, remove from editedValues
+    if (JSON.stringify(value) === JSON.stringify(original)) {
+      const next = { ...this.editedValues };
+      delete next[dotPath];
+      this.editedValues = next;
+    } else {
+      this.editedValues = { ...this.editedValues, [dotPath]: value };
+    }
+  };
+
+  /** Add a new item to an array field */
+  private handleArrayAdd = (dotPath: string, currentArr: unknown[]): void => {
+    // Add a sensible default based on existing items
+    let defaultVal: unknown = "";
+    if (currentArr.length > 0) {
+      const sample = currentArr[0];
+      if (typeof sample === "number") {
+        defaultVal = 0;
+      } else if (typeof sample === "boolean") {
+        defaultVal = false;
+      } else if (typeof sample === "object" && sample !== null) {
+        defaultVal = {};
+      }
+    }
+    this.handleFieldChange(dotPath, [...currentArr, defaultVal]);
+  };
+
+  /** Remove an item from an array field */
+  private handleArrayRemove = (dotPath: string, currentArr: unknown[], index: number): void => {
+    const next = [...currentArr];
+    next.splice(index, 1);
+    this.handleFieldChange(dotPath, next);
+  };
+
+  /** Render a form field based on value type */
+  private renderField(dotPath: string, value: unknown, depth: number): TemplateResult {
+    if (value === null || value === undefined) {
+      return html`
+        <span class="muted" style="font-style: italic">null</span>
+      `;
+    }
+
+    if (typeof value === "string") {
+      const isEdited = dotPath in this.editedValues;
+      return html`
+        <input type="text" class="inline-input ${isEdited ? "inline-input--edited" : ""}"
+          style="width:100%;"
+          .value=${value}
+          @input=${(e: Event) => {
+            this.handleFieldChange(dotPath, (e.target as HTMLInputElement).value);
+          }}
+        />
+      `;
+    }
+
+    if (typeof value === "number") {
+      const isEdited = dotPath in this.editedValues;
+      return html`
+        <input type="number" class="inline-input ${isEdited ? "inline-input--edited" : ""}"
+          style="width:120px;"
+          .value=${String(value)}
+          @input=${(e: Event) => {
+            const raw = (e.target as HTMLInputElement).value;
+            const num = Number(raw);
+            if (!Number.isNaN(num)) {
+              this.handleFieldChange(dotPath, num);
+            }
+          }}
+        />
+      `;
+    }
+
+    if (typeof value === "boolean") {
+      const isEdited = dotPath in this.editedValues;
+      return html`
+        <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;" class="${isEdited ? "inline-input--edited" : ""}">
+          <input type="checkbox"
+            .checked=${value}
+            @change=${(e: Event) => {
+              this.handleFieldChange(dotPath, (e.target as HTMLInputElement).checked);
+            }}
+          />
+          <span class="muted">${value ? "true" : "false"}</span>
+        </label>
+      `;
+    }
+
+    if (Array.isArray(value)) {
+      if (depth >= MAX_FORM_DEPTH) {
+        return html`<json-viewer .data=${value} .maxDepth=${2}></json-viewer>`;
+      }
+      return html`
+        <div class="config-form-array" style="display:flex;flex-direction:column;gap:4px;">
+          ${value.map(
+            (item, i) => html`
+            <div style="display:flex;align-items:flex-start;gap:6px;">
+              <span class="muted" style="min-width:24px;text-align:right;padding-top:6px;font-size:0.75rem;">${i}</span>
+              <div style="flex:1;">
+                ${this.renderField(`${dotPath}.${i}`, this.getEffectiveValue(`${dotPath}.${i}`) ?? item, depth + 1)}
+              </div>
+              <button class="btn-ghost" style="padding:2px 4px;flex-shrink:0;"
+                title="Remove item"
+                @click=${() => {
+                  this.handleArrayRemove(dotPath, value, i);
+                }}>
+                ${icon("x", { className: "icon-xs" })}
+              </button>
+            </div>
+          `,
+          )}
+          <button class="btn-ghost" style="align-self:flex-start;font-size:0.75rem;"
+            @click=${() => {
+              this.handleArrayAdd(dotPath, value);
+            }}>
+            ${icon("plus", { className: "icon-xs" })} Add item
+          </button>
+        </div>
+      `;
+    }
+
+    if (typeof value === "object") {
+      if (depth >= MAX_FORM_DEPTH) {
+        return html`<json-viewer .data=${value} .maxDepth=${2}></json-viewer>`;
+      }
+      const entries = Object.entries(value as Record<string, unknown>);
+      return html`
+        <fieldset class="config-form-fieldset" style="border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:8px 12px;margin:0;">
+          ${entries.map(([key]) => {
+            const childPath = `${dotPath}.${key}`;
+            const childValue =
+              this.getEffectiveValue(childPath) ?? (value as Record<string, unknown>)[key];
+            return this.renderFieldRow(key, childPath, childValue, depth + 1);
+          })}
+        </fieldset>
+      `;
+    }
+
+    // Fallback for unknown types
+    return html`<span class="muted">${JSON.stringify(value)}</span>`;
+  }
+
+  /** Render a labeled row for a field */
+  private renderFieldRow(
+    label: string,
+    dotPath: string,
+    value: unknown,
+    depth: number,
+  ): TemplateResult {
+    const isComplex = typeof value === "object" && value !== null;
+    const isEdited = dotPath in this.editedValues;
+    return html`
+      <div class="config-form-row" style="display:flex;${isComplex ? "flex-direction:column;" : "align-items:center;"}gap:6px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.04);">
+        <label class="stat-label" style="min-width:160px;font-size:0.8rem;flex-shrink:0;${isEdited ? "color:var(--color-accent, #60a5fa);font-weight:600;" : ""}">
+          ${label}
+          ${
+            isEdited
+              ? html`
+                  <span style="font-size: 0.6rem; vertical-align: super"> *</span>
+                `
+              : nothing
+          }
+        </label>
+        <div style="flex:1;min-width:0;">
+          ${this.renderField(dotPath, value, depth)}
+        </div>
+      </div>
+    `;
+  }
+
   private renderForm() {
     if (!this.configJson) {
       return html`
         <p class="muted">No config loaded.</p>
       `;
     }
+
+    const hasEdits = this.sectionHasEdits(this.activeSection);
 
     return html`
       <div class="config-layout">
@@ -284,14 +556,40 @@ export class ConfigView extends LitElement {
                 this.activeSection = sec.key;
               }}>
               ${sec.label}
+              ${
+                this.sectionHasEdits(sec.key)
+                  ? html`
+                      <span style="color: var(--color-accent, #60a5fa); font-size: 0.6rem; vertical-align: super">
+                        *</span
+                      >
+                    `
+                  : nothing
+              }
             </button>
           `,
           )}
         </div>
         <div class="config-content">
           <div class="glass-dashboard-card">
-            <div class="card-header">
+            <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
               <h3 class="card-header__title">${CONFIG_SECTIONS.find((s) => s.key === this.activeSection)?.label ?? this.activeSection}</h3>
+              ${
+                hasEdits
+                  ? html`
+                  <div style="display:flex;gap:6px;">
+                    <button class="btn-ghost" @click=${this.revertSection}
+                      title="Revert all changes in this section">
+                      ${icon("x", { className: "icon-xs" })} Revert
+                    </button>
+                    <button class="btn-primary" @click=${this.saveSectionEdits}
+                      ?disabled=${this.sectionSaving}>
+                      ${this.sectionSaving ? icon("loader", { className: "icon-xs icon-spin" }) : icon("check", { className: "icon-xs" })}
+                      Save Changes
+                    </button>
+                  </div>
+                `
+                  : nothing
+              }
             </div>
             ${this.renderSectionContent()}
           </div>
@@ -307,8 +605,26 @@ export class ConfigView extends LitElement {
         <p class="muted">No configuration for this section.</p>
       `;
     }
+
+    // For primitive top-level section values (unlikely but handle gracefully)
+    if (typeof data !== "object") {
+      return this.renderField(
+        this.activeSection,
+        this.getEffectiveValue(this.activeSection) ?? data,
+        0,
+      );
+    }
+
+    // Render each top-level key in the section as a form row
+    const entries = Object.entries(data as Record<string, unknown>);
     return html`
-      <json-viewer .data=${data} .maxDepth=${3}></json-viewer>
+      <div class="config-form-section" style="display:flex;flex-direction:column;">
+        ${entries.map(([key]) => {
+          const dotPath = `${this.activeSection}.${key}`;
+          const value = this.getEffectiveValue(dotPath) ?? (data as Record<string, unknown>)[key];
+          return this.renderFieldRow(key, dotPath, value, 0);
+        })}
+      </div>
     `;
   }
 

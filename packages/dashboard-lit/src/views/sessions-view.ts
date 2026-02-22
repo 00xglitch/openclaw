@@ -1,6 +1,8 @@
 import { consume } from "@lit/context";
 import { LitElement, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
+import { repeat } from "lit/directives/repeat.js";
+import "../components/confirm-dialog.js";
 import { icon } from "../components/icons.js";
 import { gatewayContext, type GatewayState } from "../context/gateway-context.js";
 import {
@@ -10,6 +12,9 @@ import {
 } from "../controllers/sessions.js";
 
 const THINKING_LEVELS = ["off", "low", "medium", "high"] as const;
+
+type SortField = "updated" | "tokens" | "key";
+type SortDir = "asc" | "desc";
 
 @customElement("sessions-view")
 export class SessionsView extends LitElement {
@@ -32,6 +37,10 @@ export class SessionsView extends LitElement {
   @state() private selectedKeys = new Set<string>();
   @state() private bulkAction: "delete" | "compact" | null = null;
   @state() private error = "";
+  @state() private bulkDeleteConfirmOpen = false;
+  @state() private sortBy: SortField = "updated";
+  @state() private sortDir: SortDir = "desc";
+  @state() private expandedKeys = new Set<string>();
 
   private lastConnectedState: boolean | null = null;
 
@@ -150,33 +159,63 @@ export class SessionsView extends LitElement {
     }
   }
 
+  private toggleExpanded(key: string): void {
+    const next = new Set(this.expandedKeys);
+    if (next.has(key)) {
+      next.delete(key);
+    } else {
+      next.add(key);
+    }
+    this.expandedKeys = next;
+  }
+
   private get filteredSessions(): SessionSummary[] {
     const sessions = this.result?.sessions ?? [];
-    if (!this.filterText.trim()) {
-      return sessions;
+    let filtered = sessions;
+    if (this.filterText.trim()) {
+      const q = this.filterText.toLowerCase();
+      filtered = sessions.filter(
+        (s) =>
+          s.key.toLowerCase().includes(q) ||
+          (s.label ?? "").toLowerCase().includes(q) ||
+          (s.derivedTitle ?? "").toLowerCase().includes(q) ||
+          (s.agentId ?? "").toLowerCase().includes(q),
+      );
     }
-    const q = this.filterText.toLowerCase();
-    return sessions.filter(
-      (s) =>
-        s.key.toLowerCase().includes(q) ||
-        (s.label ?? "").toLowerCase().includes(q) ||
-        (s.derivedTitle ?? "").toLowerCase().includes(q) ||
-        (s.agentId ?? "").toLowerCase().includes(q),
-    );
+
+    const dir = this.sortDir === "asc" ? 1 : -1;
+    return [...filtered].toSorted((a, b) => {
+      switch (this.sortBy) {
+        case "updated": {
+          const aT = a.updatedAt ?? 0;
+          const bT = b.updatedAt ?? 0;
+          return (aT - bT) * dir;
+        }
+        case "tokens": {
+          const aT = a.totalTokens ?? 0;
+          const bT = b.totalTokens ?? 0;
+          return (aT - bT) * dir;
+        }
+        case "key":
+          return a.key.localeCompare(b.key) * dir;
+        default:
+          return 0;
+      }
+    });
   }
 
   private navigateToChat(sessionKey: string): void {
-    this.dispatchEvent(
-      new CustomEvent("tab-change", { detail: "chat", bubbles: true, composed: true }),
-    );
     const url = new URL(window.location.href);
     url.searchParams.set("session", sessionKey);
     window.history.replaceState({}, "", url.toString());
+    this.dispatchEvent(
+      new CustomEvent("tab-change", { detail: "chat", bubbles: true, composed: true }),
+    );
   }
 
   private formatTime(ts: number | null): string {
     if (!ts) {
-      return "—";
+      return "\u2014";
     }
     const diffMs = Date.now() - ts;
     if (diffMs < 60_000) {
@@ -213,8 +252,7 @@ export class SessionsView extends LitElement {
                 ${icon("refresh", { className: "icon-xs" })} Compact
               </button>
               <button class="btn-danger-sm" @click=${() => {
-                this.bulkAction = "delete";
-                void this.executeBulkAction();
+                this.bulkDeleteConfirmOpen = true;
               }}
                 title="Delete selected">
                 ${icon("x", { className: "icon-xs" })} Delete
@@ -278,6 +316,23 @@ export class SessionsView extends LitElement {
             <option value="100">100</option>
             <option value="200">200</option>
           </select>
+          <span class="agent-chat__input-divider"></span>
+          <select class="view-select" .value=${`${this.sortBy}:${this.sortDir}`}
+            @change=${(e: Event) => {
+              const [field, dir] = (e.target as HTMLSelectElement).value.split(":") as [
+                SortField,
+                SortDir,
+              ];
+              this.sortBy = field;
+              this.sortDir = dir;
+            }}>
+            <option value="updated:desc">Updated (newest)</option>
+            <option value="updated:asc">Updated (oldest)</option>
+            <option value="tokens:desc">Tokens (most)</option>
+            <option value="tokens:asc">Tokens (least)</option>
+            <option value="key:asc">Key (A-Z)</option>
+            <option value="key:desc">Key (Z-A)</option>
+          </select>
         </div>
 
         ${
@@ -309,7 +364,11 @@ export class SessionsView extends LitElement {
                 </tr>
               </thead>
               <tbody>
-                ${sessions.map((s) => this.renderRow(s))}
+                ${repeat(
+                  sessions,
+                  (s) => s.key,
+                  (s) => this.renderRow(s),
+                )}
                 ${
                   sessions.length === 0
                     ? html`
@@ -326,6 +385,22 @@ export class SessionsView extends LitElement {
             : nothing
         }
       </div>
+
+      <confirm-dialog
+        .open=${this.bulkDeleteConfirmOpen}
+        title="Delete Sessions"
+        message=${`Delete ${this.selectedKeys.size} selected sessions? This cannot be undone.`}
+        confirmLabel="Delete"
+        confirmVariant="danger"
+        @confirm=${() => {
+          this.bulkDeleteConfirmOpen = false;
+          this.bulkAction = "delete";
+          void this.executeBulkAction();
+        }}
+        @cancel=${() => {
+          this.bulkDeleteConfirmOpen = false;
+        }}
+      ></confirm-dialog>
     `;
   }
 
@@ -333,6 +408,7 @@ export class SessionsView extends LitElement {
     const isDeleting = this.deleteConfirm === s.key;
     const isCompacting = this.compacting === s.key;
     const isSelected = this.selectedKeys.has(s.key);
+    const isExpanded = this.expandedKeys.has(s.key);
 
     return html`
       <tr class="view-table-row ${isSelected ? "view-table-row--selected" : ""}">
@@ -341,9 +417,15 @@ export class SessionsView extends LitElement {
             @change=${() => this.toggleSelect(s.key)} />
         </td>
         <td>
-          <button class="btn-link" @click=${() => this.navigateToChat(s.key)} title="Open in chat">
-            ${s.key.length > 28 ? s.key.slice(0, 28) + "..." : s.key}
-          </button>
+          <div style="display:flex;align-items:center;gap:4px">
+            <button class="btn-ghost-sm" @click=${() => this.toggleExpanded(s.key)}
+              title="${isExpanded ? "Collapse" : "Expand"}" style="padding:0 2px;min-width:auto">
+              ${icon(isExpanded ? "chevronDown" : "chevronRight", { className: "icon-xs" })}
+            </button>
+            <button class="btn-link" @click=${() => this.navigateToChat(s.key)} title="Open in chat">
+              ${s.key.length > 28 ? s.key.slice(0, 28) + "..." : s.key}
+            </button>
+          </div>
         </td>
         <td>
           <input type="text" class="inline-input" .value=${s.label ?? s.derivedTitle ?? ""}
@@ -366,7 +448,7 @@ export class SessionsView extends LitElement {
           </select>
         </td>
         <td class="muted">${this.formatTime(s.updatedAt)}</td>
-        <td>${s.totalTokens != null ? s.totalTokens.toLocaleString() : "—"}</td>
+        <td>${s.totalTokens != null ? s.totalTokens.toLocaleString() : "\u2014"}</td>
         <td>
           <div style="display:flex;gap:2px;align-items:center">
             <button class="btn-ghost-sm" @click=${() => void this.compactSession(s.key)}
@@ -392,6 +474,83 @@ export class SessionsView extends LitElement {
                     ${icon("x", { className: "icon-xs" })}
                   </button>
                 `
+            }
+          </div>
+        </td>
+      </tr>
+      ${isExpanded ? this.renderExpandedDetail(s) : nothing}
+    `;
+  }
+
+  private renderExpandedDetail(s: SessionSummary) {
+    return html`
+      <tr class="view-table-row view-table-row--detail">
+        <td></td>
+        <td colspan="7">
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:0.5rem 1.5rem;padding:0.5rem 0;font-size:0.82rem">
+            <div>
+              <span class="muted">Full key:</span>
+              <code style="font-size:0.78rem;word-break:break-all">${s.key}</code>
+            </div>
+            ${
+              s.channel
+                ? html`
+              <div>
+                <span class="muted">Channel:</span>
+                <span class="chip">${s.channel}</span>
+              </div>
+            `
+                : nothing
+            }
+            ${
+              s.model
+                ? html`
+              <div>
+                <span class="muted">Model:</span>
+                <span>${s.model}</span>
+              </div>
+            `
+                : nothing
+            }
+            ${
+              s.modelProvider
+                ? html`
+              <div>
+                <span class="muted">Provider:</span>
+                <span>${s.modelProvider}</span>
+              </div>
+            `
+                : nothing
+            }
+            ${
+              s.sendPolicy
+                ? html`
+              <div>
+                <span class="muted">Send policy:</span>
+                <span class="chip">${s.sendPolicy}</span>
+              </div>
+            `
+                : nothing
+            }
+            ${
+              s.kind
+                ? html`
+              <div>
+                <span class="muted">Kind:</span>
+                <span>${s.kind}</span>
+              </div>
+            `
+                : nothing
+            }
+            ${
+              s.displayName
+                ? html`
+              <div>
+                <span class="muted">Display name:</span>
+                <span>${s.displayName}</span>
+              </div>
+            `
+                : nothing
             }
           </div>
         </td>

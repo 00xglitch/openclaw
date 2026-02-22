@@ -55,6 +55,7 @@
   --accent-soft: rgba(251, 136, 105, 0.14);
   --success: #3fb950;
   --warn: #d29922;
+  --danger: #ef4444;
   --icon-size-xs: 0.9rem;
   --icon-size-sm: 1.05rem;
   --icon-size-md: 1.25rem;
@@ -94,6 +95,7 @@
   --accent-soft: rgba(255, 90, 54, 0.16);
   --success: #34d399;
   --warn: #fbbf24;
+  --danger: #f87171;
 
   --lg-bg-primary: rgba(14, 16, 22, 0.6);
   --lg-bg-elevated: rgba(18, 20, 28, 0.7);
@@ -125,6 +127,7 @@
   --accent-soft: rgba(199, 57, 26, 0.1);
   --success: #0f7b4f;
   --warn: #9a5b00;
+  --danger: #dc2626;
 
   /* Glass surfaces — higher opacity for light readability */
   --lg-bg-primary: rgba(255, 255, 255, 0.82);
@@ -1937,8 +1940,8 @@ pre {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 40px;
+  height: 40px;
   border-radius: var(--lg-radius-sm);
   border: 1px solid color-mix(in srgb, var(--accent) 44%, transparent);
   background: color-mix(in srgb, var(--accent) 14%, var(--lg-bg-primary));
@@ -1947,7 +1950,6 @@ pre {
   flex-shrink: 0;
   transition: all var(--lg-duration-fast) ease;
   align-self: flex-end;
-  margin-bottom: 4px;
 }
 
 .chat-send-btn:hover:not(:disabled) {
@@ -2170,11 +2172,11 @@ pre {
 }
 
 :root[data-theme="light"] .nav-item {
-  color: #374151;
+  color: var(--sidebar-nav-inactive);
 }
 
 :root[data-theme="light"] .nav-item__icon {
-  color: #4b5563;
+  color: var(--muted);
 }
 
 :root[data-theme="light"] .nav-item:hover {
@@ -2192,7 +2194,7 @@ pre {
 }
 
 :root[data-theme="light"] .nav-item--active .nav-item__icon {
-  color: #c7391a;
+  color: var(--accent);
 }
 
 /* Panels: subtle top highlight for depth illusion */
@@ -2242,15 +2244,15 @@ pre {
 :root[data-theme="light"] .pill {
   background: rgba(255, 255, 255, 0.9);
   border-color: rgba(0, 0, 0, 0.12);
-  color: #1a1a1a;
+  color: var(--text);
 }
 
 :root[data-theme="light"] .status-dot {
-  background: #9a5b00;
+  background: var(--warn);
 }
 
 :root[data-theme="light"] .status-dot--ok {
-  background: #0f7b4f;
+  background: var(--success);
 }
 
 /* Inputs: clear focus ring, solid background */
@@ -2258,7 +2260,7 @@ pre {
 :root[data-theme="light"] .connect-form input {
   background: rgba(255, 255, 255, 0.95);
   border-color: rgba(0, 0, 0, 0.16);
-  color: #1a1a1a;
+  color: var(--text);
 }
 
 :root[data-theme="light"] .input-row input::placeholder,
@@ -2277,7 +2279,7 @@ pre {
 :root[data-theme="light"] button {
   background: rgba(0, 0, 0, 0.04);
   border-color: rgba(0, 0, 0, 0.16);
-  color: #1a1a1a;
+  color: var(--text);
 }
 
 :root[data-theme="light"] button:hover {
@@ -2289,7 +2291,7 @@ pre {
 :root[data-theme="light"] pre {
   background: rgba(0, 0, 0, 0.03);
   border-color: rgba(0, 0, 0, 0.1);
-  color: #1a1a1a;
+  color: var(--text);
 }
 
 /* Chat log */
@@ -2311,21 +2313,21 @@ pre {
 
 :root[data-theme="light"] .theme-btn.active {
   background: rgba(199, 57, 26, 0.1);
-  color: #1a1a1a;
+  color: var(--text);
 }
 
 :root[data-theme="light"] .theme-btn:hover {
-  color: #1a1a1a;
+  color: var(--text);
 }
 
 /* Muted text: ensure 4.5:1 contrast ratio on light bg */
 :root[data-theme="light"] .muted {
-  color: #4b5563;
+  color: var(--muted);
 }
 
 /* Overview info labels */
 :root[data-theme="light"] .overview-info-label {
-  color: #4b5563;
+  color: var(--muted);
   font-weight: 600;
 }
 
@@ -2349,7 +2351,7 @@ pre {
 /* Placeholder: ensure the badge pops */
 :root[data-theme="light"] .placeholder-badge {
   background: rgba(199, 57, 26, 0.08);
-  color: #c7391a;
+  color: var(--accent);
 }
 
 :root[data-theme="light"] .placeholder-icon {
@@ -2916,7 +2918,8 @@ agent-chat {
 }
 
 .agent-dropdown__item--active {
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-left: 3px solid var(--accent);
 }
 
 .agent-dropdown__accent {
@@ -2924,6 +2927,24 @@ agent-chat {
   height: 22px;
   border-radius: 2px;
   flex-shrink: 0;
+}
+
+.agent-dropdown__item--subagent {
+  position: relative;
+  font-size: 0.82rem;
+  opacity: 0.9;
+}
+
+.agent-dropdown__connector {
+  position: absolute;
+  left: 10px;
+  top: 0;
+  bottom: 50%;
+  width: 8px;
+  border-left: 1px solid var(--lg-border-color);
+  border-bottom: 1px solid var(--lg-border-color);
+  border-bottom-left-radius: 4px;
+  pointer-events: none;
 }
 
 .agent-dropdown__item-name {
@@ -3478,8 +3499,8 @@ agent-chat {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 40px;
+  height: 40px;
   border-radius: var(--lg-radius-sm);
   border: 1px solid var(--lg-border-color);
   background: transparent;
@@ -3489,7 +3510,6 @@ agent-chat {
   transition: all var(--lg-duration-fast) ease;
   padding: 0;
   align-self: flex-end;
-  margin-bottom: 4px;
 }
 
 .agent-chat__input-btn:hover:not(:disabled) {
@@ -3510,15 +3530,15 @@ agent-chat {
 }
 
 .agent-chat__input-btn--recording {
-  color: #ef4444;
-  border-color: color-mix(in srgb, #ef4444 56%, transparent);
-  background: color-mix(in srgb, #ef4444 10%, transparent);
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 56%, transparent);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
   animation: pulse-recording 1.5s ease-in-out infinite;
 }
 
 @keyframes pulse-recording {
-  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, #ef4444 30%, transparent); }
-  50% { box-shadow: 0 0 0 4px color-mix(in srgb, #ef4444 0%, transparent); }
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--danger) 30%, transparent); }
+  50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--danger) 0%, transparent); }
 }
 
 .agent-chat__input-actions {
@@ -3526,7 +3546,6 @@ agent-chat {
   align-items: center;
   gap: 2px;
   align-self: flex-end;
-  margin-bottom: 4px;
 }
 
 .agent-chat__input-divider {
@@ -3543,6 +3562,65 @@ agent-chat {
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
   align-self: center;
+}
+
+/* ─── Agent Chat Session Bar ─── */
+
+.agent-chat__session-bar {
+  display: flex;
+  align-items: center;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--lg-border-color);
+  background: var(--lg-bg-elevated);
+  gap: 8px;
+}
+
+.agent-chat__session-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 100;
+  min-width: 280px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--lg-bg-elevated);
+  border: 1px solid var(--lg-border-color);
+  border-radius: var(--lg-radius-md);
+  box-shadow: var(--lg-shadow-high);
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+}
+
+.agent-chat__session-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border: none;
+  background: none;
+  color: var(--text);
+  font-size: 0.82rem;
+  cursor: pointer;
+  border-radius: var(--lg-radius-sm);
+  text-align: left;
+  width: 100%;
+}
+
+.agent-chat__session-item:hover {
+  background: var(--lg-bg-interactive);
+}
+
+.agent-chat__session-item--active {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-left: 3px solid var(--accent);
+}
+
+.agent-chat__session-item--new {
+  color: var(--accent);
+  font-weight: 600;
+  border-bottom: 1px solid var(--lg-border-color);
+  margin-bottom: 4px;
 }
 
 /* ─── Agent Chat Search ─── */
@@ -4003,7 +4081,7 @@ agent-chat {
 }
 
 .count-badge--red {
-  color: #f85149;
+  color: var(--danger);
 }
 
 /* ─── Glass Divider ─── */
@@ -4059,7 +4137,7 @@ agent-chat {
 }
 
 .severity-dot--error {
-  background: #f85149;
+  background: var(--danger);
 }
 
 .severity-dot--warning {
@@ -4289,7 +4367,7 @@ agent-chat {
   color: var(--muted);
 }
 .filter-chip--shutdown {
-  color: #f85149;
+  color: var(--danger);
 }
 .filter-chip--challenge {
   color: var(--warn);
@@ -4319,7 +4397,7 @@ agent-chat {
 }
 .event-type-badge--shutdown {
   background: rgba(248, 81, 73, 0.14);
-  color: #f85149;
+  color: var(--danger);
 }
 .event-type-badge--challenge {
   background: rgba(210, 153, 34, 0.14);
@@ -4364,7 +4442,7 @@ agent-chat {
   background: var(--warn);
 }
 .status-pill__dot--red {
-  background: #f85149;
+  background: var(--danger);
 }
 
 /* ─── Proportion Bar (Skills Summary) ─── */
@@ -4393,7 +4471,7 @@ agent-chat {
   background: var(--warn);
 }
 .proportion-bar__segment--red {
-  background: #f85149;
+  background: var(--danger);
 }
 
 /* ─── Quick Actions ─── */
@@ -4579,7 +4657,7 @@ agent-chat {
   background: var(--muted);
 }
 .connection-badge__dot--error {
-  background: #f85149;
+  background: var(--danger);
 }
 
 @keyframes pulse-badge {
@@ -4760,7 +4838,7 @@ agent-chat {
 
 .overview-banner--error {
   background: rgba(248, 81, 73, 0.12);
-  color: #f85149;
+  color: var(--danger);
   border-bottom: 1px solid rgba(248, 81, 73, 0.2);
 }
 
@@ -4929,7 +5007,7 @@ agent-chat {
   color: var(--success);
 }
 .trend-down {
-  color: #f85149;
+  color: var(--danger);
 }
 .trend-stable {
   color: var(--muted);
@@ -5121,7 +5199,7 @@ agent-chat {
   align-items: center;
   gap: 6px;
   font-size: 0.75rem;
-  color: #f85149;
+  color: var(--danger);
   margin-bottom: 0.5rem;
 }
 
@@ -5254,7 +5332,7 @@ agent-chat {
   color: var(--success);
 }
 .health-badge--failed {
-  color: #f85149;
+  color: var(--danger);
 }
 .health-badge--running {
   color: var(--warn);
@@ -5292,7 +5370,7 @@ agent-chat {
 
 .needs-attention-badge--degraded {
   background: rgba(248, 81, 73, 0.14);
-  color: #f85149;
+  color: var(--danger);
 }
 
 .needs-attention-badge--at-risk {
@@ -5403,11 +5481,11 @@ agent-chat {
 }
 
 .view-error {
-  background: rgba(239, 68, 68, 0.1);
-  border: 1px solid rgba(239, 68, 68, 0.3);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent);
   border-radius: var(--lg-radius-sm);
   padding: 8px 12px;
-  color: #ef4444;
+  color: var(--danger);
   font-size: 0.85rem;
   margin-bottom: 1rem;
 }
@@ -5645,11 +5723,11 @@ agent-chat {
 }
 
 .btn-danger-sm {
-  background: rgba(239, 68, 68, 0.15);
-  border: 1px solid rgba(239, 68, 68, 0.3);
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent);
   border-radius: 4px;
   padding: 2px 8px;
-  color: #ef4444;
+  color: var(--danger);
   cursor: pointer;
   font-size: 0.75rem;
 }
@@ -5714,6 +5792,36 @@ agent-chat {
   margin-top: 8px;
 }
 
+.channel-type-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 12px;
+  padding: 1rem 0;
+}
+
+.channel-type-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 12px;
+  border: 1px solid var(--lg-border-color);
+  border-radius: var(--lg-radius-md);
+  cursor: pointer;
+  background: var(--lg-bg-base);
+  transition: all 0.15s ease;
+}
+
+.channel-type-card:hover {
+  border-color: var(--accent);
+  background: var(--lg-bg-interactive);
+}
+
+.channel-type-card--selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--lg-bg-base));
+}
+
 /* ── Instances View ─── */
 
 .instances-list {
@@ -5775,8 +5883,9 @@ agent-chat {
 }
 
 .agent-sidebar-item--active {
-  background: var(--lg-bg-interactive);
+  background: color-mix(in srgb, var(--accent) 12%, var(--lg-bg-interactive));
   border-left: 3px solid var(--accent);
+  color: var(--text);
 }
 
 .agent-sidebar-emoji {
@@ -6384,6 +6493,31 @@ agent-chat {
 
 /* ─── Confirm Dialog ─── */
 
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 10vh;
+  background: var(--lg-bg-scrim);
+  backdrop-filter: blur(var(--lg-blur-sm));
+  -webkit-backdrop-filter: blur(var(--lg-blur-sm));
+  animation: confirm-fade-in var(--lg-duration-fast) var(--lg-easing-spring);
+}
+
+.modal-card {
+  background: var(--lg-bg-elevated);
+  border: 1px solid var(--lg-border-color);
+  border-radius: var(--lg-radius-lg);
+  box-shadow: var(--lg-shadow-high);
+  padding: 1.5rem;
+  min-width: 340px;
+  max-width: 480px;
+  animation: confirm-card-in var(--lg-duration-fast) var(--lg-easing-spring);
+}
+
 .confirm-overlay {
   position: fixed;
   inset: 0;
@@ -6580,13 +6714,13 @@ agent-chat {
 }
 
 .status-chip--error {
-  color: #f85149;
+  color: var(--danger);
   background: rgba(248, 81, 73, 0.1);
   border-color: rgba(248, 81, 73, 0.25);
 }
 
 .status-chip--error .status-chip__dot {
-  background: #f85149;
+  background: var(--danger);
 }
 
 .status-chip--warning,

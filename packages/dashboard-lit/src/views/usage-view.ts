@@ -1,6 +1,7 @@
 import { consume } from "@lit/context";
 import { LitElement, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
+import { repeat } from "lit/directives/repeat.js";
 import { icon } from "../components/icons.js";
 import { gatewayContext, type GatewayState } from "../context/gateway-context.js";
 import { loadUsage } from "../controllers/usage.js";
@@ -102,8 +103,11 @@ export class UsageView extends LitElement {
 
   private exportCsv(): void {
     const sessions = this.filteredSessions;
-    const lines = ["key,label,agent,channel,model,tokens,cost,updated"];
+    const lines = [
+      "key,label,agent,channel,model,tokens,cost,input_tokens,output_tokens,cache_read,cache_write,messages,updated",
+    ];
     for (const s of sessions) {
+      const u = s.usage;
       lines.push(
         [
           s.key,
@@ -111,8 +115,13 @@ export class UsageView extends LitElement {
           s.agentId ?? "",
           s.channel ?? "",
           s.model ?? "",
-          String(s.usage?.totalTokens ?? 0),
-          String(s.usage?.totalCost ?? 0),
+          String(u?.totalTokens ?? 0),
+          String(u?.totalCost ?? 0),
+          String(u?.input ?? 0),
+          String(u?.output ?? 0),
+          String(u?.cacheRead ?? 0),
+          String(u?.cacheWrite ?? 0),
+          String(u?.messageCounts?.total ?? 0),
           s.updatedAt ? new Date(s.updatedAt).toISOString() : "",
         ].join(","),
       );
@@ -213,21 +222,35 @@ export class UsageView extends LitElement {
                   }}>Tokens</button>
                 </div>
               </div>
-              <div class="usage-chart">
-                ${daily.map((d) => {
-                  const val = this.chartMode === "cost" ? d.cost : d.tokens;
+              <div class="usage-chart" style="position:relative;">
+                ${(() => {
                   const maxVal = Math.max(
                     ...daily.map((x) => (this.chartMode === "cost" ? x.cost : x.tokens)),
                     1,
                   );
-                  const pct = (val / maxVal) * 100;
+                  const avg =
+                    daily.reduce(
+                      (sum, x) => sum + (this.chartMode === "cost" ? x.cost : x.tokens),
+                      0,
+                    ) / (daily.length || 1);
+                  const avgPct = (avg / maxVal) * 100;
+                  const avgFormatted =
+                    this.chartMode === "cost" ? this.formatCost(avg) : this.formatTokens(avg);
                   return html`
-                    <div class="usage-chart-bar" title="${d.date}: ${this.chartMode === "cost" ? this.formatCost(d.cost) : this.formatTokens(d.tokens)}">
-                      <div class="usage-chart-fill" style="height:${pct}%"></div>
-                      <div class="usage-chart-label">${d.date.slice(5)}</div>
-                    </div>
+                    <div class="usage-chart-avg" style="position:absolute;left:0;right:0;bottom:${avgPct}%;height:1px;border-top:1px dashed var(--text-muted, #888);pointer-events:none;z-index:1;" title="Avg: ${avgFormatted}"></div>
+                    ${daily.map((d) => {
+                      const val = this.chartMode === "cost" ? d.cost : d.tokens;
+                      const pct = (val / maxVal) * 100;
+                      return html`
+                        <div class="usage-chart-bar" title="${d.date}: ${this.chartMode === "cost" ? this.formatCost(d.cost) : this.formatTokens(d.tokens)}">
+                          <div class="usage-chart-value">${this.chartMode === "cost" ? this.formatCost(d.cost) : this.formatTokens(d.tokens)}</div>
+                          <div class="usage-chart-fill" style="height:${pct}%"></div>
+                          <div class="usage-chart-label">${d.date.slice(5)}</div>
+                        </div>
+                      `;
+                    })}
                   `;
-                })}
+                })()}
               </div>
             </div>
           `
@@ -281,15 +304,25 @@ export class UsageView extends LitElement {
                     <tr><th>Agent</th><th>Tokens</th><th>Cost</th></tr>
                   </thead>
                   <tbody>
-                    ${r.aggregates.byAgent.map(
-                      (a) => html`
-                      <tr>
-                        <td><span class="chip">${a.agentId}</span></td>
-                        <td>${this.formatTokens(a.totals.totalTokens)}</td>
-                        <td>${this.formatCost(a.totals.totalCost)}</td>
-                      </tr>
-                    `,
-                    )}
+                    ${(() => {
+                      const maxAgentCost = Math.max(
+                        ...r.aggregates.byAgent.map((a) => a.totals.totalCost),
+                        1,
+                      );
+                      return r.aggregates.byAgent.map((a) => {
+                        const barPct = (a.totals.totalCost / maxAgentCost) * 100;
+                        return html`
+                          <tr>
+                            <td><span class="chip">${a.agentId}</span></td>
+                            <td>${this.formatTokens(a.totals.totalTokens)}</td>
+                            <td>
+                              ${this.formatCost(a.totals.totalCost)}
+                              <div style="background:var(--accent);height:4px;border-radius:2px;width:${barPct}%;margin-top:4px;"></div>
+                            </td>
+                          </tr>
+                        `;
+                      });
+                    })()}
                   </tbody>
                 </table>
               </div>
@@ -363,7 +396,9 @@ export class UsageView extends LitElement {
                 </tr>
               </thead>
               <tbody>
-                ${sessions.map(
+                ${repeat(
+                  sessions,
+                  (s) => s.key,
                   (s) => html`
                   <tr class="view-table-row" style="cursor:pointer;" @click=${() => {
                     this.expandedSession = this.expandedSession === s.key ? null : s.key;
