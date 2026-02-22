@@ -17,6 +17,7 @@ export type GatewayState = {
   request: <T = unknown>(method: string, params?: unknown) => Promise<T>;
   reconnect: (settings: { gatewayUrl: string; token: string; password: string }) => void;
   retryNow: () => void;
+  subscribe: (eventType: string, callback: (payload: unknown) => void) => () => void;
 };
 
 export const gatewayContext = createContext<GatewayState>("dashboard-gateway");

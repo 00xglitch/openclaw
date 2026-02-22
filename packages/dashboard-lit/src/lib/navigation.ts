@@ -7,7 +7,7 @@ export const TAB_GROUPS = [
     tabs: ["overview", "channels", "instances", "sessions", "usage", "cron"],
   },
   { label: "agent", tabs: ["agents", "skills", "nodes"] },
-  { label: "settings", tabs: ["config", "debug", "logs"] },
+  { label: "settings", tabs: ["config", "settings", "debug", "logs"] },
 ] as const;
 
 export type TabGroup = (typeof TAB_GROUPS)[number]["label"];
@@ -24,6 +24,7 @@ export type Tab =
   | "nodes"
   | "chat"
   | "config"
+  | "settings"
   | "debug"
   | "logs";
 
@@ -39,6 +40,7 @@ const TAB_PATHS: Record<Tab, string> = {
   nodes: "/nodes",
   chat: "/chat",
   config: "/config",
+  settings: "/settings",
   debug: "/debug",
   logs: "/logs",
 };
@@ -57,6 +59,7 @@ const TAB_TITLES: Record<Tab, string> = {
   skills: "Skills",
   nodes: "Nodes",
   config: "Config",
+  settings: "Settings",
   debug: "Debug",
   logs: "Logs",
 };
@@ -73,6 +76,7 @@ const TAB_SUBTITLES: Record<Tab, string> = {
   skills: "Installed skills",
   nodes: "Connected compute nodes",
   config: "Gateway configuration",
+  settings: "Dashboard preferences",
   debug: "Debug tools",
   logs: "Gateway event logs",
 };
@@ -96,12 +100,28 @@ const TAB_ICONS: Record<Tab, IconName> = {
   skills: "zap",
   nodes: "monitor",
   config: "settings",
+  settings: "settings",
   debug: "bug",
   logs: "scrollText",
 };
 
 /** Tabs that have real implementations (not placeholders) */
-export const IMPLEMENTED_TABS: Set<Tab> = new Set(["overview", "chat"]);
+export const IMPLEMENTED_TABS: Set<Tab> = new Set([
+  "overview",
+  "chat",
+  "sessions",
+  "channels",
+  "instances",
+  "agents",
+  "skills",
+  "cron",
+  "usage",
+  "nodes",
+  "config",
+  "debug",
+  "logs",
+  "settings",
+]);
 
 export function normalizeBasePath(basePath: string): string {
   if (!basePath) {
