@@ -93,13 +93,20 @@ export async function sendChatMessage(
   if (msg) {
     contentBlocks.push({ type: "text", text: msg });
   }
-  // Add image previews to the message for display
+  // Add attachment previews to the message for display
   if (hasAttachments) {
     for (const att of attachments) {
-      contentBlocks.push({
-        type: "image",
-        source: { type: "base64", media_type: att.mimeType, data: att.dataUrl },
-      });
+      if (att.mimeType.startsWith("image/")) {
+        contentBlocks.push({
+          type: "image",
+          source: { type: "base64", media_type: att.mimeType, data: att.dataUrl },
+        });
+      } else {
+        contentBlocks.push({
+          type: "text",
+          text: `📎 ${att.fileName || "document"} (${att.mimeType})`,
+        });
+      }
     }
   }
 
@@ -119,27 +126,41 @@ export async function sendChatMessage(
   state.chatStream = "";
   state.chatStreamStartedAt = now;
 
-  // Convert attachments to API format
-  const apiAttachments = hasAttachments
-    ? attachments
-        .map((att) => {
-          const parsed = dataUrlToBase64(att.dataUrl);
-          if (!parsed) {
-            return null;
-          }
-          return {
-            type: "image",
-            mimeType: parsed.mimeType,
-            content: parsed.content,
-          };
-        })
-        .filter((a): a is NonNullable<typeof a> => a !== null)
-    : undefined;
+  // Convert attachments to API format — images as base64 blocks, documents as inline text
+  let messageWithDocs = msg;
+  const imageAttachments: Array<{ type: string; mimeType: string; content: string }> = [];
+
+  if (hasAttachments) {
+    for (const att of attachments) {
+      const parsed = dataUrlToBase64(att.dataUrl);
+      if (!parsed) {
+        continue;
+      }
+      if (parsed.mimeType.startsWith("image/")) {
+        imageAttachments.push({
+          type: "image",
+          mimeType: parsed.mimeType,
+          content: parsed.content,
+        });
+      } else {
+        // Non-image files: decode base64 to text and inline in message
+        try {
+          const text = atob(parsed.content);
+          const fileName = att.fileName || "document";
+          messageWithDocs += `\n\n<file name="${fileName}">\n${text}\n</file>`;
+        } catch {
+          // Binary file that can't be decoded as text — skip
+        }
+      }
+    }
+  }
+
+  const apiAttachments = imageAttachments.length > 0 ? imageAttachments : undefined;
 
   try {
     await state.client.request("chat.send", {
       sessionKey: state.sessionKey,
-      message: msg,
+      message: messageWithDocs,
       deliver: false,
       idempotencyKey: runId,
       attachments: apiAttachments,
