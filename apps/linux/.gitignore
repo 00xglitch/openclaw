@@ -1,0 +1,9 @@
+node_modules/
+out/
+dist/
+release/
+*.tsbuildinfo
+.DS_Store
+electron.vite.config.*.mjs
+test-results/
+playwright-report/

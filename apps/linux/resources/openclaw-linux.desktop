@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=OpenClaw
+Comment=Voice chat client for OpenClaw AI gateway
+Exec=openclaw-linux %U
+Icon=openclaw-linux
+Terminal=false
+Type=Application
+Categories=Network;Chat;Utility;
+StartupWMClass=openclaw-linux
+Keywords=ai;chat;voice;openclaw;

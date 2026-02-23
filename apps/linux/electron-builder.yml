@@ -1,0 +1,20 @@
+appId: ai.openclaw.linux
+productName: OpenClaw
+directories:
+  output: release
+  buildResources: assets
+files:
+  - out/**/*
+  - "!out/renderer/src/**"
+linux:
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: tar.gz
+      arch: [x64]
+  icon: assets/icon.png
+  category: Network
+  desktop:
+    Name: OpenClaw
+    Comment: Voice chat for OpenClaw AI gateway
+    StartupWMClass: openclaw-linux

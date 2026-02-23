@@ -110,6 +110,10 @@
           - "extensions/zalouser/**"
           - "docs/channels/zalouser.md"
 
+"app: linux":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "apps/linux/**"
 "app: android":
   - changed-files:
       - any-glob-to-any-file:
