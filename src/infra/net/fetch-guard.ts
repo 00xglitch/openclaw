@@ -15,6 +15,7 @@ import {
 import { loadUndiciRuntimeDeps } from "./undici-runtime.js";
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+type DispatcherAwareRequestInit = RequestInit & { dispatcher?: Dispatcher };
 
 export const GUARDED_FETCH_MODE = {
   STRICT: "strict",
@@ -93,6 +94,34 @@ function assertExplicitProxySupportsPinnedDns(
   }
 }
 
+function createPolicyDispatcherWithoutPinnedDns(
+  dispatcherPolicy?: PinnedDispatcherPolicy,
+): Dispatcher | null {
+  if (!dispatcherPolicy) {
+    return null;
+  }
+  const { Agent, EnvHttpProxyAgent, ProxyAgent } = loadUndiciRuntimeDeps();
+
+  if (dispatcherPolicy.mode === "direct") {
+    return new Agent(dispatcherPolicy.connect ? { connect: { ...dispatcherPolicy.connect } } : {});
+  }
+
+  if (dispatcherPolicy.mode === "env-proxy") {
+    return new EnvHttpProxyAgent({
+      ...(dispatcherPolicy.connect ? { connect: { ...dispatcherPolicy.connect } } : {}),
+      ...(dispatcherPolicy.proxyTls ? { proxyTls: { ...dispatcherPolicy.proxyTls } } : {}),
+    });
+  }
+
+  const proxyUrl = dispatcherPolicy.proxyUrl.trim();
+  return dispatcherPolicy.proxyTls
+    ? new ProxyAgent({
+        uri: proxyUrl,
+        requestTls: { ...dispatcherPolicy.proxyTls },
+      })
+    : new ProxyAgent(proxyUrl);
+}
+
 async function assertExplicitProxyAllowed(
   dispatcherPolicy: PinnedDispatcherPolicy | undefined,
   lookupFn: LookupFn | undefined,
@@ -124,6 +153,24 @@ async function assertExplicitProxyAllowed(
 
 function isRedirectStatus(status: number): boolean {
   return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
+}
+
+function isMockedFetch(fetchImpl: FetchLike | undefined): boolean {
+  if (typeof fetchImpl !== "function") {
+    return false;
+  }
+  return typeof (fetchImpl as FetchLike & { mock?: unknown }).mock === "object";
+}
+
+function isAmbientGlobalFetch(params: {
+  fetchImpl: FetchLike | undefined;
+  globalFetch: FetchLike | undefined;
+}): boolean {
+  return (
+    typeof params.fetchImpl === "function" &&
+    typeof params.globalFetch === "function" &&
+    params.fetchImpl === params.globalFetch
+  );
 }
 
 export function retainSafeHeadersForCrossOriginRedirectHeaders(
@@ -178,6 +225,17 @@ function rewriteRedirectInitForMethod(params: {
     body: undefined,
     headers: dropBodyHeaders(init.headers),
   };
+}
+
+async function fetchWithRuntimeDispatcher(
+  input: string,
+  init: DispatcherAwareRequestInit,
+): Promise<Response> {
+  const runtimeFetch = loadUndiciRuntimeDeps().fetch as unknown as (
+    input: string,
+    init?: DispatcherAwareRequestInit,
+  ) => Promise<unknown>;
+  return (await runtimeFetch(input, init)) as Response;
 }
 
 export async function fetchWithSsrFGuard(params: GuardedFetchOptions): Promise<GuardedFetchResult> {
@@ -238,22 +296,34 @@ export async function fetchWithSsrFGuard(params: GuardedFetchOptions): Promise<G
       if (canUseTrustedEnvProxy) {
         const { EnvHttpProxyAgent } = loadUndiciRuntimeDeps();
         dispatcher = new EnvHttpProxyAgent();
-      } else if (params.pinDns !== false) {
+      } else if (params.pinDns === false) {
+        dispatcher = createPolicyDispatcherWithoutPinnedDns(params.dispatcherPolicy);
+      } else {
         dispatcher = createPinnedDispatcher(pinned, params.dispatcherPolicy, params.policy);
       }
 
-      const init: RequestInit & { dispatcher?: Dispatcher } = {
+      const init: DispatcherAwareRequestInit = {
         ...(currentInit ? { ...currentInit } : {}),
         redirect: "manual",
         ...(dispatcher ? { dispatcher } : {}),
         ...(signal ? { signal } : {}),
       };
 
-      const fetcher =
-        dispatcher && !params.fetchImpl
-          ? (loadUndiciRuntimeDeps().fetch as unknown as FetchLike)
-          : defaultFetch;
-      const response = await fetcher(parsedUrl.toString(), init);
+      const supportsDispatcherInit =
+        (params.fetchImpl !== undefined &&
+          !isAmbientGlobalFetch({
+            fetchImpl: params.fetchImpl,
+            globalFetch: globalThis.fetch,
+          })) ||
+        isMockedFetch(defaultFetch);
+      // Explicit caller stubs and test-installed fetch mocks should win.
+      // Otherwise, fall back to undici's fetch whenever we attach a dispatcher,
+      // because the default global fetch path will not honor per-request
+      // dispatchers.
+      const shouldUseRuntimeFetch = Boolean(dispatcher) && !supportsDispatcherInit;
+      const response = shouldUseRuntimeFetch
+        ? await fetchWithRuntimeDispatcher(parsedUrl.toString(), init)
+        : await defaultFetch(parsedUrl.toString(), init);
 
       if (isRedirectStatus(response.status)) {
         const location = response.headers.get("location");
