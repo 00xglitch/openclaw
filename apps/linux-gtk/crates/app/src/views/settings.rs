@@ -226,8 +226,14 @@ impl SettingsView {
                 }
             }
 
+            // TODO: recreate the GatewayClient with new config instead of
+            // just setting env vars. The running client was built from the
+            // original GatewayConfig and won't pick up env changes until
+            // the next auto-reconnect cycle. For now, updating env + label
+            // is a best-effort hint; a full fix requires client teardown +
+            // rebuild, which needs SharedClient to support replacement.
             btn.set_sensitive(false);
-            rl3.set_label("Settings saved. Gateway will reconnect automatically.");
+            rl3.set_label("Settings saved. Restart the app to apply new connection settings.");
             rl3.set_visible(true);
             rl3.remove_css_class("chip-error");
             rl3.add_css_class("chip-ok");

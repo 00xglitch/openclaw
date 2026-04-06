@@ -60,6 +60,7 @@ impl OpenClawWindow {
         // Onboarding
         let rs = root_stack.clone();
         let onboarding = views::onboarding::OnboardingView::new(
+            state.clone(),
             client.clone(),
             move || rs.set_visible_child_name("main"),
         );

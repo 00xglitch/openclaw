@@ -2,7 +2,7 @@ use gtk4::{self, glib, Orientation};
 use libadwaita as adw;
 use libadwaita::prelude::*;
 
-use crate::state::SharedClient;
+use crate::state::{AppState, SharedClient};
 
 /// Onboarding view with gateway URL/token entry.
 pub struct OnboardingView {
@@ -11,6 +11,7 @@ pub struct OnboardingView {
 
 impl OnboardingView {
     pub fn new(
+        state: AppState,
         client: SharedClient,
         on_connected: impl Fn() + 'static,
     ) -> Self {
@@ -109,9 +110,12 @@ impl OnboardingView {
             let on_connected = on_connected.clone();
             let sl2 = sl.clone();
             let btn2 = btn.clone();
-            let client_check = client.clone();
+            let state_check = state.clone();
             glib::timeout_add_local(std::time::Duration::from_secs(3), move || {
-                let connected = client_check.lock().unwrap().is_some();
+                // Gate on actual connection state, not just client allocation.
+                // The client is stored as Some() before the handshake completes,
+                // so is_some() alone doesn't prove connectivity.
+                let connected = state_check.is_connected();
                 if connected {
                     (on_connected)();
                 } else {

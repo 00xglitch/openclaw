@@ -46,9 +46,15 @@ impl DeviceIdentity {
             let data = std::fs::read_to_string(&path)?;
             let stored: StoredIdentity = serde_json::from_str(&data)?;
             let secret_bytes = URL_SAFE_NO_PAD.decode(&stored.secret_key)
-                .expect("invalid base64 in stored identity");
+                .map_err(|e| IdentityError::Read(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("invalid base64 in identity file: {e}"),
+                )))?;
             let key_bytes: [u8; 32] = secret_bytes.try_into()
-                .expect("secret key must be 32 bytes");
+                .map_err(|v: Vec<u8>| IdentityError::Read(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("secret key must be 32 bytes, got {}", v.len()),
+                )))?;
             let signing_key = SigningKey::from_bytes(&key_bytes);
             let verifying_key = signing_key.verifying_key();
             Ok(Self {
