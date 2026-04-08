@@ -461,6 +461,62 @@ async fn try_connect(
     Ok(device_token)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cancel_command_variant_holds_request_id() {
+        let id = "req-abc-123".to_string();
+        let cmd = WsCommand::Cancel(id.clone());
+        match cmd {
+            WsCommand::Cancel(cancel_id) => assert_eq!(cancel_id, "req-abc-123"),
+            _ => panic!("expected Cancel variant"),
+        }
+    }
+
+    #[test]
+    fn client_error_display_messages() {
+        let err = ClientError::NotConnected;
+        assert_eq!(err.to_string(), "not connected");
+
+        let err = ClientError::Timeout;
+        assert_eq!(err.to_string(), "request timed out");
+
+        let err = ClientError::Gateway("bad request".into());
+        assert_eq!(err.to_string(), "gateway error: bad request");
+
+        let err = ClientError::SendFailed;
+        assert_eq!(err.to_string(), "send failed: channel closed");
+    }
+
+    #[test]
+    fn ws_command_send_variant() {
+        let cmd = WsCommand::Send(r#"{"type":"req","id":"1"}"#.to_string());
+        match cmd {
+            WsCommand::Send(json) => assert!(json.contains("req")),
+            _ => panic!("expected Send variant"),
+        }
+    }
+
+    #[test]
+    fn ws_command_request_variant() {
+        let (tx, _rx) = oneshot::channel();
+        let cmd = WsCommand::Request {
+            frame: r#"{"type":"req"}"#.to_string(),
+            id: "r1".to_string(),
+            reply: tx,
+        };
+        match cmd {
+            WsCommand::Request { id, frame, .. } => {
+                assert_eq!(id, "r1");
+                assert!(frame.contains("req"));
+            }
+            _ => panic!("expected Request variant"),
+        }
+    }
+}
+
 /// TLS certificate verifier that accepts any certificate (for local dev with self-signed certs).
 #[derive(Debug)]
 struct NoVerifier;

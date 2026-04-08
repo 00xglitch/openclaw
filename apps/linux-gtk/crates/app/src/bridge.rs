@@ -39,6 +39,16 @@ impl EventBridge {
                 state.set_connected(true);
                 state.set_server_version(hello.server.version.clone());
 
+                // Desktop notification for connection status
+                if let Some(app) = gtk4::gio::Application::default() {
+                    crate::notifications::send_notification(
+                        &app,
+                        "Gateway Connected",
+                        &format!("OpenClaw gateway v{}", hello.server.version),
+                        "network-transmit-symbolic",
+                    );
+                }
+
                 // The connect snapshot only carries presence/health/version —
                 // agents, sessions, and channels must be fetched via RPC.
                 // Kick off async fetches; state update happens when each
@@ -48,6 +58,16 @@ impl EventBridge {
             GatewayEvent::Disconnected(reason) => {
                 info!("disconnected: {reason}");
                 state.set_connected(false);
+
+                // Desktop notification for disconnection
+                if let Some(app) = gtk4::gio::Application::default() {
+                    crate::notifications::send_notification(
+                        &app,
+                        "Gateway Disconnected",
+                        &format!("Reason: {reason}"),
+                        "network-offline-symbolic",
+                    );
+                }
             }
             GatewayEvent::Event(frame) => {
                 match frame.event.as_str() {

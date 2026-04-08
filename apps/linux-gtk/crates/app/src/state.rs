@@ -34,6 +34,7 @@ mod imp {
         pub current_view: RefCell<String>,
         pub selected_agent: RefCell<Option<String>>,
         pub selected_session: RefCell<Option<String>>,
+        pub service_active: Cell<bool>,
     }
 
     #[glib::object_subclass]
@@ -190,5 +191,13 @@ impl AppState {
 
     pub fn set_selected_session(&self, key: Option<String>) {
         *self.imp().selected_session.borrow_mut() = key;
+    }
+
+    pub fn service_active(&self) -> bool {
+        self.imp().service_active.get()
+    }
+
+    pub fn set_service_active(&self, val: bool) {
+        self.imp().service_active.set(val);
     }
 }

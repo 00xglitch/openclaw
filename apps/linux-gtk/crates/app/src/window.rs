@@ -228,6 +228,28 @@ impl OpenClawWindow {
         status_row.append(&status_dot);
         status_row.append(&status_text);
 
+        // Service status row (systemd openclaw-gateway.service)
+        let service_row = gtk4::Box::builder()
+            .orientation(Orientation::Horizontal)
+            .spacing(6)
+            .build();
+
+        let service_dot = gtk4::Label::builder()
+            .label("\u{25CF}")
+            .css_classes(vec!["status-dot".to_string(), "disconnected".to_string()])
+            .build();
+
+        let service_text = gtk4::Label::builder()
+            .label("Service: checking...")
+            .css_classes(vec!["caption".to_string(), "dim-label".to_string()])
+            .halign(gtk4::Align::Start)
+            .hexpand(true)
+            .ellipsize(gtk4::pango::EllipsizeMode::End)
+            .build();
+
+        service_row.append(&service_dot);
+        service_row.append(&service_text);
+
         let docs_btn = gtk4::LinkButton::builder()
             .label("Docs")
             .uri("https://docs.openclaw.ai")
@@ -236,6 +258,7 @@ impl OpenClawWindow {
         docs_btn.add_css_class("caption");
 
         footer.append(&status_row);
+        footer.append(&service_row);
         footer.append(&docs_btn);
 
         // Assemble sidebar
@@ -546,11 +569,25 @@ impl OpenClawWindow {
         let st = status_text;
         let cc = conn_chip;
         let ad = agent_dropdown;
+        let svc_dot = service_dot;
+        let svc_text = service_text;
         let mut agents_populated = false;
         glib::timeout_add_local(std::time::Duration::from_secs(1), move || {
+            // Update service status from systemd monitor
+            if state3.service_active() {
+                svc_dot.remove_css_class("disconnected");
+                svc_dot.add_css_class("connected");
+                svc_text.set_label("Service: active");
+            } else {
+                svc_dot.remove_css_class("connected");
+                svc_dot.add_css_class("disconnected");
+                svc_text.set_label("Service: inactive");
+            }
+
             if state3.is_connected() {
                 let ver = state3.server_version();
                 sd.remove_css_class("disconnected");
+                sd.remove_css_class("connecting");
                 sd.add_css_class("connected");
                 st.set_label(&format!("v{ver}"));
                 cc.set_label("Connected");
@@ -599,8 +636,12 @@ impl OpenClawWindow {
                 }
             } else {
                 sd.remove_css_class("connected");
-                sd.add_css_class("disconnected");
-                st.set_label("Disconnected");
+                // Show pulse animation while trying to connect
+                if !sd.has_css_class("connecting") {
+                    sd.add_css_class("connecting");
+                }
+                sd.remove_css_class("disconnected");
+                st.set_label("Connecting...");
                 cc.set_label("Disconnected");
                 cc.remove_css_class("chip-ok");
                 cc.add_css_class("chip-error");

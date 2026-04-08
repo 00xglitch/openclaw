@@ -115,6 +115,9 @@ impl OpenClawApplication {
         let bridge = EventBridge::new(bridge_rx, state.clone(), shared_client.clone());
         bridge.start();
 
+        // Start systemd service monitor (polls openclaw-gateway.service)
+        crate::systemd::SystemdMonitor::start(state.clone());
+
         let window = OpenClawWindow::build(app, state, shared_client);
         window.present();
     }

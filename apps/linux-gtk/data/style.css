@@ -199,3 +199,38 @@ spinner {
 headerbar label.status-chip {
     margin: 0 4px;
 }
+
+/* ---- Pulse animation for connecting state ---- */
+@keyframes pulse {
+    0%, 100% { opacity: 1.0; }
+    50% { opacity: 0.3; }
+}
+
+.status-dot.connecting {
+    animation: pulse 1.5s ease-in-out infinite;
+    color: #f59e0b;
+}
+
+/* ---- Smooth transitions for view switches ---- */
+.boxed-list row {
+    transition: background-color 150ms ease;
+}
+
+/* ---- Button hover animations ---- */
+button.suggested-action {
+    transition: background-color 200ms ease, box-shadow 200ms ease;
+}
+
+button.suggested-action:hover {
+    box-shadow: 0 2px 8px alpha(@accent_bg_color, 0.3);
+}
+
+/* ---- Card hover effect ---- */
+.card {
+    transition: box-shadow 200ms ease;
+}
+
+/* ---- Expander row smooth open ---- */
+row.expander {
+    transition: min-height 200ms ease;
+}

@@ -410,3 +410,64 @@ fn build_job_row(
 
     group.add(&expander);
 }
+
+#[cfg(test)]
+mod tests {
+    /// Basic cron expression validation: 5-field standard cron format.
+    fn is_valid_cron(expr: &str) -> bool {
+        let fields: Vec<&str> = expr.split_whitespace().collect();
+        if fields.len() != 5 {
+            return false;
+        }
+        // Each field must be non-empty and contain only valid cron chars
+        for field in &fields {
+            if field.is_empty() {
+                return false;
+            }
+            for ch in field.chars() {
+                if !ch.is_ascii_digit()
+                    && ch != '*'
+                    && ch != '/'
+                    && ch != ','
+                    && ch != '-'
+                    && ch != '?'
+                {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    #[test]
+    fn valid_cron_expressions() {
+        assert!(is_valid_cron("* * * * *"));
+        assert!(is_valid_cron("0 */6 * * *"));
+        assert!(is_valid_cron("30 9 * * 1-5"));
+        assert!(is_valid_cron("0 0 1,15 * *"));
+        assert!(is_valid_cron("*/5 * * * *"));
+    }
+
+    #[test]
+    fn invalid_cron_expressions() {
+        assert!(!is_valid_cron(""));
+        assert!(!is_valid_cron("* * *"));
+        assert!(!is_valid_cron("not a cron"));
+        assert!(!is_valid_cron("* * * * * *")); // 6 fields
+    }
+
+    #[test]
+    fn cron_field_count() {
+        let expr = "0 */6 * * *";
+        let fields: Vec<&str> = expr.split_whitespace().collect();
+        assert_eq!(fields.len(), 5, "standard cron has exactly 5 fields");
+    }
+
+    #[test]
+    fn cron_every_minute() {
+        let expr = "* * * * *";
+        assert!(is_valid_cron(expr));
+        let fields: Vec<&str> = expr.split_whitespace().collect();
+        assert!(fields.iter().all(|f| *f == "*"));
+    }
+}

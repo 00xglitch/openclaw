@@ -5,7 +5,9 @@ mod widgets;
 mod state;
 mod bridge;
 mod markdown;
+mod notifications;
 mod session_filter;
+mod systemd;
 mod tray;
 
 use tracing_subscriber::EnvFilter;

@@ -362,3 +362,50 @@ impl SessionsView {
         &self.container
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn session_key_parsing_extracts_agent_and_session() {
+        // Session keys follow the pattern "agentId:sessionName"
+        let key = "my-agent:default";
+        let parts: Vec<&str> = key.splitn(2, ':').collect();
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0], "my-agent");
+        assert_eq!(parts[1], "default");
+    }
+
+    #[test]
+    fn session_key_without_colon_is_standalone() {
+        let key = "default";
+        let parts: Vec<&str> = key.splitn(2, ':').collect();
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0], "default");
+    }
+
+    #[test]
+    fn session_key_with_multiple_colons_splits_at_first() {
+        // Keys like "agent:session:subkey" should split at the first colon
+        let key = "agent:session:run:123";
+        let parts: Vec<&str> = key.splitn(2, ':').collect();
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0], "agent");
+        assert_eq!(parts[1], "session:run:123");
+    }
+
+    #[test]
+    fn session_key_empty_string() {
+        let key = "";
+        let parts: Vec<&str> = key.splitn(2, ':').collect();
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0], "");
+    }
+
+    #[test]
+    fn session_status_values() {
+        let valid_statuses = ["active", "idle", "archived"];
+        for status in &valid_statuses {
+            assert!(!status.is_empty());
+        }
+    }
+}
