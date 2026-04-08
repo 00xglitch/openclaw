@@ -2,6 +2,7 @@ use gtk4::{self, glib, Orientation};
 use libadwaita as adw;
 use libadwaita::prelude::*;
 
+use crate::bridge::EventBridge;
 use crate::state::{AppState, SharedClient};
 
 pub struct ControlRoomView {
@@ -30,79 +31,189 @@ impl ControlRoomView {
             .margin_bottom(24)
             .build();
 
-        // Status strip
-        let status_cards = gtk4::Box::builder()
-            .orientation(Orientation::Horizontal)
-            .spacing(12)
-            .homogeneous(true)
+        // --- Gateway section ---
+        let gateway_group = adw::PreferencesGroup::builder()
+            .title("Gateway")
             .build();
 
-        let health_chip = Self::build_chip("Health", "...");
-        let uptime_chip = Self::build_chip("Uptime", "...");
-        let version_chip = Self::build_chip("Version", "...");
-        let agents_chip = Self::build_chip("Agents", "0");
-        let sessions_chip = Self::build_chip("Sessions", "0");
+        let health_row = adw::ActionRow::builder()
+            .title("Health Status")
+            .subtitle("Checking...")
+            .build();
+        let health_icon = gtk4::Image::from_icon_name("network-offline-symbolic");
+        health_row.add_prefix(&health_icon);
 
-        status_cards.append(&health_chip);
-        status_cards.append(&uptime_chip);
-        status_cards.append(&version_chip);
-        status_cards.append(&agents_chip);
-        status_cards.append(&sessions_chip);
-        content.append(&status_cards);
+        let restart_btn = gtk4::Button::builder()
+            .label("Restart")
+            .valign(gtk4::Align::Center)
+            .css_classes(vec!["destructive-action".to_string()])
+            .build();
+        health_row.add_suffix(&restart_btn);
 
-        // Quick actions
+        gateway_group.add(&health_row);
+        content.append(&gateway_group);
+
+        // Wire restart button
+        let c_restart = client.clone();
+        let health_row_ref = health_row.clone();
+        restart_btn.connect_clicked(move |btn| {
+            btn.set_sensitive(false);
+            health_row_ref.set_subtitle("Restarting...");
+            let c = c_restart.clone();
+            let hr = health_row_ref.clone();
+            let btn2 = btn.clone();
+            glib::spawn_future_local(async move {
+                let result = Self::rpc(&c, "gateway.restart", serde_json::json!({})).await;
+                match result {
+                    Ok(_) => hr.set_subtitle("Restart requested"),
+                    Err(e) => hr.set_subtitle(&format!("Restart failed: {e}")),
+                }
+                btn2.set_sensitive(true);
+            });
+        });
+
+        // --- Quick Actions section ---
         let actions_group = adw::PreferencesGroup::builder()
             .title("Quick Actions")
             .build();
 
-        let probe_row = adw::ActionRow::builder()
-            .title("Probe Channels")
-            .subtitle("Test all channel connections")
+        // Refresh Snapshot
+        let refresh_row = adw::ActionRow::builder()
+            .title("Refresh Snapshot")
+            .subtitle("Re-fetch agents, sessions, channels, and models")
             .activatable(true)
             .build();
-        probe_row.add_suffix(&gtk4::Image::from_icon_name("go-next-symbolic"));
+        refresh_row.add_suffix(&gtk4::Image::from_icon_name("view-refresh-symbolic"));
+        actions_group.add(&refresh_row);
 
-        let reload_row = adw::ActionRow::builder()
-            .title("Reload Config")
-            .subtitle("Hot-reload gateway configuration")
-            .activatable(true)
-            .build();
-        reload_row.add_suffix(&gtk4::Image::from_icon_name("go-next-symbolic"));
+        let s_refresh = state.clone();
+        let c_refresh = client.clone();
+        refresh_row.connect_activated(move |row| {
+            row.set_subtitle("Refreshing...");
+            EventBridge::refresh_snapshot(s_refresh.clone(), c_refresh.clone());
+            let row2 = row.clone();
+            // Brief delay so the user sees feedback before resetting subtitle
+            glib::timeout_add_local_once(std::time::Duration::from_secs(1), move || {
+                row2.set_subtitle("Re-fetch agents, sessions, channels, and models");
+            });
+        });
 
+        // Run Cron Now
         let cron_row = adw::ActionRow::builder()
-            .title("Run Due Cron Jobs")
-            .subtitle("Execute any due scheduled tasks")
-            .activatable(true)
+            .title("Run Cron Now")
+            .subtitle("Execute a scheduled job by ID")
             .build();
-        cron_row.add_suffix(&gtk4::Image::from_icon_name("go-next-symbolic"));
-
-        actions_group.add(&probe_row);
-        actions_group.add(&reload_row);
+        let cron_entry = gtk4::Entry::builder()
+            .placeholder_text("Job ID")
+            .valign(gtk4::Align::Center)
+            .width_chars(16)
+            .build();
+        let cron_btn = gtk4::Button::builder()
+            .label("Run")
+            .valign(gtk4::Align::Center)
+            .css_classes(vec!["suggested-action".to_string()])
+            .build();
+        cron_row.add_suffix(&cron_entry);
+        cron_row.add_suffix(&cron_btn);
         actions_group.add(&cron_row);
+
+        let c_cron = client.clone();
+        let cron_entry_ref = cron_entry.clone();
+        let cron_row_ref = cron_row.clone();
+        cron_btn.connect_clicked(move |btn| {
+            let job_id = cron_entry_ref.text().to_string();
+            if job_id.is_empty() {
+                cron_row_ref.set_subtitle("Enter a job ID first");
+                return;
+            }
+            btn.set_sensitive(false);
+            cron_row_ref.set_subtitle(&format!("Running {job_id}..."));
+            let c = c_cron.clone();
+            let cr = cron_row_ref.clone();
+            let btn2 = btn.clone();
+            glib::spawn_future_local(async move {
+                let result =
+                    Self::rpc(&c, "cron.run", serde_json::json!({ "jobId": job_id })).await;
+                match result {
+                    Ok(_) => cr.set_subtitle(&format!("{job_id}: OK")),
+                    Err(e) => cr.set_subtitle(&format!("{job_id}: {e}")),
+                }
+                btn2.set_sensitive(true);
+            });
+        });
+
+        // Abort Active Run
+        let abort_row = adw::ActionRow::builder()
+            .title("Abort Active Run")
+            .subtitle("Cancel a running agent session")
+            .build();
+        let abort_entry = gtk4::Entry::builder()
+            .placeholder_text("Session key")
+            .valign(gtk4::Align::Center)
+            .width_chars(16)
+            .build();
+        let abort_btn = gtk4::Button::builder()
+            .label("Abort")
+            .valign(gtk4::Align::Center)
+            .css_classes(vec!["destructive-action".to_string()])
+            .build();
+        abort_row.add_suffix(&abort_entry);
+        abort_row.add_suffix(&abort_btn);
+        actions_group.add(&abort_row);
+
+        let c_abort = client.clone();
+        let abort_entry_ref = abort_entry.clone();
+        let abort_row_ref = abort_row.clone();
+        abort_btn.connect_clicked(move |btn| {
+            let session_key = abort_entry_ref.text().to_string();
+            if session_key.is_empty() {
+                abort_row_ref.set_subtitle("Enter a session key first");
+                return;
+            }
+            btn.set_sensitive(false);
+            abort_row_ref.set_subtitle(&format!("Aborting {session_key}..."));
+            let c = c_abort.clone();
+            let ar = abort_row_ref.clone();
+            let btn2 = btn.clone();
+            glib::spawn_future_local(async move {
+                let result = Self::rpc(
+                    &c,
+                    "chat.abort",
+                    serde_json::json!({ "sessionKey": session_key }),
+                )
+                .await;
+                match result {
+                    Ok(_) => ar.set_subtitle(&format!("{session_key}: aborted")),
+                    Err(e) => ar.set_subtitle(&format!("{session_key}: {e}")),
+                }
+                btn2.set_sensitive(true);
+            });
+        });
+
         content.append(&actions_group);
 
-        // Action result
-        let result_label = gtk4::Label::builder()
-            .label("")
-            .xalign(0.0)
-            .wrap(true)
-            .visible(false)
-            .css_classes(vec!["caption".to_string()])
-            .build();
-        content.append(&result_label);
-
-        // Agent activity
-        let agent_group = adw::PreferencesGroup::builder()
-            .title("Agent Activity")
-            .description("Recent agent session counts")
+        // --- System Info section ---
+        let info_group = adw::PreferencesGroup::builder()
+            .title("System Info")
             .build();
 
-        let agent_list = gtk4::ListBox::builder()
-            .selection_mode(gtk4::SelectionMode::None)
-            .css_classes(vec!["boxed-list".to_string()])
+        let version_row = adw::ActionRow::builder()
+            .title("Server Version")
+            .subtitle("...")
             .build();
-        content.append(&agent_group);
-        content.append(&agent_list);
+        let agents_row = adw::ActionRow::builder()
+            .title("Connected Agents")
+            .subtitle("0")
+            .build();
+        let sessions_row = adw::ActionRow::builder()
+            .title("Active Sessions")
+            .subtitle("0")
+            .build();
+
+        info_group.add(&version_row);
+        info_group.add(&agents_row);
+        info_group.add(&sessions_row);
+        content.append(&info_group);
 
         let clamp = adw::Clamp::builder()
             .maximum_size(800)
@@ -111,154 +222,47 @@ impl ControlRoomView {
         scroll.set_child(Some(&clamp));
         container.append(&scroll);
 
-        // Poll state
+        // Poll state for health and system info
         let s = state;
-        let hc = health_chip;
-        let vc = version_chip;
-        let ac = agents_chip;
-        let sc = sessions_chip;
-        let al = agent_list;
-        let mut agent_populated = false;
+        let hi = health_icon;
+        let hr = health_row;
+        let vr = version_row;
+        let ar = agents_row;
+        let sr = sessions_row;
         glib::timeout_add_local(std::time::Duration::from_secs(1), move || {
             if s.is_connected() {
-                Self::set_chip_value(&hc, "OK");
-                Self::set_chip_value(&vc, &format!("v{}", s.server_version()));
-                Self::set_chip_value(&ac, &format!("{}", s.agents().len()));
-                Self::set_chip_value(&sc, &format!("{}", s.sessions().len()));
-
-                if !agent_populated {
-                    let agents = s.agents();
-                    let sessions = s.sessions();
-                    for agent in &agents {
-                        let id = agent
-                            .get("id")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("?");
-                        let emoji = agent
-                            .get("identity")
-                            .and_then(|i| i.get("emoji"))
-                            .and_then(|e| e.as_str())
-                            .unwrap_or("");
-                        let name = agent
-                            .get("identity")
-                            .and_then(|i| i.get("name"))
-                            .and_then(|n| n.as_str())
-                            .unwrap_or(id);
-                        let count = sessions
-                            .iter()
-                            .filter(|sess| {
-                                sess.get("agentId")
-                                    .and_then(|v| v.as_str())
-                                    == Some(id)
-                            })
-                            .count();
-
-                        let row = adw::ActionRow::builder()
-                            .title(format!("{emoji} {name}"))
-                            .subtitle(format!("{count} session(s)"))
-                            .build();
-                        al.append(&row);
-                    }
-                    if !agents.is_empty() {
-                        agent_populated = true;
-                    }
-                }
+                hi.set_icon_name(Some("network-idle-symbolic"));
+                hr.set_subtitle("Connected");
+                vr.set_subtitle(&format!("v{}", s.server_version()));
+                ar.set_subtitle(&format!("{}", s.agents().len()));
+                sr.set_subtitle(&format!("{}", s.sessions().len()));
             } else {
-                Self::set_chip_value(&hc, "Offline");
+                hi.set_icon_name(Some("network-offline-symbolic"));
+                hr.set_subtitle("Offline");
+                vr.set_subtitle("...");
+                ar.set_subtitle("0");
+                sr.set_subtitle("0");
             }
             glib::ControlFlow::Continue
-        });
-
-        // Wire quick actions
-        let c1 = client.clone();
-        let rl1 = result_label.clone();
-        probe_row.connect_activated(move |_| {
-            Self::quick_action(&c1, "channels.status", serde_json::json!({"probe": true}), &rl1);
-        });
-
-        let c2 = client.clone();
-        let rl2 = result_label.clone();
-        reload_row.connect_activated(move |_| {
-            Self::quick_action(&c2, "config.get", serde_json::json!({}), &rl2);
-        });
-
-        let c3 = client;
-        let rl3 = result_label;
-        cron_row.connect_activated(move |_| {
-            Self::quick_action(&c3, "cron.status", serde_json::json!({}), &rl3);
         });
 
         Self { container }
     }
 
-    fn build_chip(label: &str, value: &str) -> gtk4::Box {
-        let chip = gtk4::Box::builder()
-            .orientation(Orientation::Vertical)
-            .spacing(2)
-            .css_classes(vec!["card".to_string()])
-            .build();
-        let inner = gtk4::Box::builder()
-            .orientation(Orientation::Vertical)
-            .spacing(2)
-            .margin_start(12)
-            .margin_end(12)
-            .margin_top(8)
-            .margin_bottom(8)
-            .build();
-        inner.append(
-            &gtk4::Label::builder()
-                .label(label)
-                .css_classes(vec!["caption".to_string(), "dim-label".to_string()])
-                .halign(gtk4::Align::Start)
-                .build(),
-        );
-        inner.append(
-            &gtk4::Label::builder()
-                .label(value)
-                .css_classes(vec!["heading".to_string()])
-                .halign(gtk4::Align::Start)
-                .name("chip-value")
-                .build(),
-        );
-        chip.append(&inner);
-        chip
-    }
-
-    fn set_chip_value(chip: &gtk4::Box, value: &str) {
-        if let Some(inner) = chip.first_child()
-            && let Some(inner_box) = inner.downcast_ref::<gtk4::Box>()
-            && let Some(first) = inner_box.first_child()
-            && let Some(val_label) = first.next_sibling()
-            && let Some(label) = val_label.downcast_ref::<gtk4::Label>()
-        {
-            label.set_label(value);
-        }
-    }
-
-    fn quick_action(
+    /// Send an RPC request and return the result payload or error string.
+    async fn rpc(
         client: &SharedClient,
         method: &str,
         params: serde_json::Value,
-        result_label: &gtk4::Label,
-    ) {
-        if let Some(gw) = client.lock().unwrap().clone() {
-            let rl = result_label.clone();
-            let method = method.to_string();
-            rl.set_label("Running...");
-            rl.set_visible(true);
-            glib::spawn_future_local(async move {
-                match gw.request(&method, params).await {
-                    Ok(_) => {
-                        rl.set_label(&format!("{method}: OK"));
-                        rl.add_css_class("chip-ok");
-                    }
-                    Err(e) => {
-                        rl.set_label(&format!("{method}: {e}"));
-                        rl.add_css_class("chip-error");
-                    }
-                }
-            });
-        }
+    ) -> Result<serde_json::Value, String> {
+        let gw = client
+            .lock()
+            .map_err(|e| format!("lock error: {e}"))?
+            .clone()
+            .ok_or_else(|| "not connected".to_string())?;
+        gw.request(method, params)
+            .await
+            .map_err(|e| format!("{e}"))
     }
 
     pub fn widget(&self) -> &gtk4::Box {
