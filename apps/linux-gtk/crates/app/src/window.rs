@@ -334,10 +334,10 @@ impl OpenClawWindow {
         let overview_view = views::overview::OverviewView::new(state.clone());
         content_stack.add_named(overview_view.widget(), Some("overview"));
 
-        let channels_view = views::channels::ChannelsView::new(state.clone());
+        let channels_view = views::channels::ChannelsView::new(state.clone(), client.clone());
         content_stack.add_named(channels_view.widget(), Some("channels"));
 
-        let sessions_view = views::sessions::SessionsView::new(state.clone());
+        let sessions_view = views::sessions::SessionsView::new(state.clone(), client.clone());
         content_stack.add_named(sessions_view.widget(), Some("sessions"));
 
         let agents_view = views::agents::AgentsView::new(state.clone(), client.clone());

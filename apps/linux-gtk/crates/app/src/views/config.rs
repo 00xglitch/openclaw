@@ -1,5 +1,7 @@
 use gtk4::{self, glib, Orientation};
 use libadwaita::prelude::*;
+use sourceview5::prelude::*;
+use tracing::{debug, warn};
 
 use crate::state::SharedClient;
 
@@ -44,26 +46,50 @@ impl ConfigView {
             .tooltip_text("Reload config from gateway")
             .build();
 
-        let apply_btn = gtk4::Button::builder()
-            .label("Apply")
+        let save_btn = gtk4::Button::builder()
+            .label("Save")
             .css_classes(vec!["suggested-action".to_string(), "pill".to_string()])
-            .tooltip_text("Apply config with hot-reload")
+            .tooltip_text("Validate and save config to gateway")
             .sensitive(false)
             .build();
 
         toolbar.append(&title);
         toolbar.append(&status_label);
         toolbar.append(&reload_btn);
-        toolbar.append(&apply_btn);
+        toolbar.append(&save_btn);
         container.append(&toolbar);
         container.append(&gtk4::Separator::new(Orientation::Horizontal));
 
-        // Config editor (plain TextView with monospace)
-        let editor = gtk4::TextView::builder()
+        // Source view with JSON syntax highlighting.
+        let lang_manager = sourceview5::LanguageManager::default();
+        let json_lang = lang_manager.language("json");
+
+        let buffer = sourceview5::Buffer::new(None);
+        if let Some(ref lang) = json_lang {
+            buffer.set_language(Some(lang));
+        }
+        buffer.set_highlight_syntax(true);
+
+        // Use a dark style scheme if available.
+        let scheme_manager = sourceview5::StyleSchemeManager::default();
+        if let Some(scheme) = scheme_manager
+            .scheme("Adwaita-dark")
+            .or_else(|| scheme_manager.scheme("oblivion"))
+        {
+            buffer.set_style_scheme(Some(&scheme));
+        }
+
+        let editor = sourceview5::View::builder()
+            .buffer(&buffer)
             .monospace(true)
+            .show_line_numbers(true)
+            .auto_indent(true)
+            .indent_width(2)
+            .tab_width(2)
+            .insert_spaces_instead_of_tabs(true)
             .wrap_mode(gtk4::WrapMode::WordChar)
-            .left_margin(16)
-            .right_margin(16)
+            .left_margin(12)
+            .right_margin(12)
             .top_margin(12)
             .bottom_margin(12)
             .vexpand(true)
@@ -77,7 +103,7 @@ impl ConfigView {
 
         container.append(&scroll);
 
-        // Validation result
+        // Validation bar at the bottom.
         let validation_bar = gtk4::Box::builder()
             .orientation(Orientation::Horizontal)
             .spacing(8)
@@ -96,46 +122,37 @@ impl ConfigView {
         validation_bar.append(&valid_label);
         container.append(&validation_bar);
 
-        // Track config hash for conflict detection
-        let config_hash = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
-
-        // Load config
+        // Load config from gateway.
         let load_config = {
             let client = client.clone();
-            let editor = editor.clone();
+            let buffer = buffer.clone();
             let status_label = status_label.clone();
-            let apply_btn = apply_btn.clone();
-            let config_hash = config_hash.clone();
+            let save_btn = save_btn.clone();
             move || {
                 if let Some(gw) = client.lock().unwrap().clone() {
-                    let ed = editor.clone();
+                    let buf = buffer.clone();
                     let sl = status_label.clone();
-                    let ab = apply_btn.clone();
-                    let ch = config_hash.clone();
+                    let sb = save_btn.clone();
                     glib::spawn_future_local(async move {
-                        match gw.request("config.get", serde_json::json!({})).await {
+                        let params = serde_json::json!({ "path": "" });
+                        match gw.request("config.get", params).await {
                             Ok(payload) => {
-                                if let Some(hash) =
-                                    payload.get("hash").and_then(|h| h.as_str())
-                                {
-                                    *ch.borrow_mut() = hash.to_string();
-                                }
                                 if let Some(config) = payload.get("config") {
                                     let pretty = serde_json::to_string_pretty(config)
                                         .unwrap_or_else(|_| config.to_string());
-                                    ed.buffer().set_text(&pretty);
+                                    buf.set_text(&pretty);
                                     sl.set_label("Loaded");
-                                    ab.set_sensitive(false);
+                                    sb.set_sensitive(false);
+                                    debug!("config.get loaded");
                                 } else {
-                                    ed.buffer()
-                                        .set_text("// No config returned from gateway");
+                                    buf.set_text("// No config returned from gateway");
                                     sl.set_label("Empty");
                                 }
                             }
                             Err(e) => {
-                                ed.buffer()
-                                    .set_text(&format!("// Failed to load: {e}"));
+                                buf.set_text(&format!("// Failed to load: {e}"));
                                 sl.set_label("Error");
+                                warn!("config.get: {e}");
                             }
                         }
                     });
@@ -143,27 +160,27 @@ impl ConfigView {
             }
         };
 
-        // Load on startup
+        // Load on startup after a short delay for connection.
         let load = load_config.clone();
         glib::timeout_add_local_once(std::time::Duration::from_secs(2), move || {
             load();
         });
 
-        // Reload button
+        // Reload button.
         let load2 = load_config;
         reload_btn.connect_clicked(move |_| {
             load2();
         });
 
-        // Mark dirty on edit
-        let ab2 = apply_btn.clone();
+        // Mark dirty on edit + live JSON validation.
+        let sb2 = save_btn.clone();
         let sl2 = status_label.clone();
         let vl = valid_label.clone();
-        editor.buffer().connect_changed(move |buf| {
-            ab2.set_sensitive(true);
+        buffer.connect_changed(move |buf| {
+            sb2.set_sensitive(true);
             sl2.set_label("Modified");
-            // Quick JSON validation
-            let text = buf.text(&buf.start_iter(), &buf.end_iter(), false);
+            let (start, end) = buf.bounds();
+            let text = buf.text(&start, &end, false);
             match serde_json::from_str::<serde_json::Value>(&text) {
                 Ok(_) => {
                     vl.set_label("Valid JSON");
@@ -178,44 +195,44 @@ impl ConfigView {
             }
         });
 
-        // Apply button
+        // Save button: validate JSON, then send config.set.
         let c2 = client;
-        let ed2 = editor;
         let sl3 = status_label;
-        let ab3 = apply_btn;
-        let ch2 = config_hash;
-        ab3.connect_clicked(move |btn| {
-            let buf = ed2.buffer();
-            let raw = buf
-                .text(&buf.start_iter(), &buf.end_iter(), false)
-                .to_string();
+        let sb3 = save_btn;
+        let buf_save = buffer;
+        sb3.connect_clicked(move |btn| {
+            let (start, end) = buf_save.bounds();
+            let raw = buf_save.text(&start, &end, false).to_string();
 
-            // Validate JSON first
-            if serde_json::from_str::<serde_json::Value>(&raw).is_err() {
-                sl3.set_label("Cannot apply: invalid JSON");
-                return;
-            }
+            let parsed = match serde_json::from_str::<serde_json::Value>(&raw) {
+                Ok(v) => v,
+                Err(_) => {
+                    sl3.set_label("Cannot save: invalid JSON");
+                    return;
+                }
+            };
 
             btn.set_sensitive(false);
-            sl3.set_label("Applying...");
+            sl3.set_label("Saving...");
 
             if let Some(gw) = c2.lock().unwrap().clone() {
                 let sl = sl3.clone();
                 let btn2 = btn.clone();
-                let hash = ch2.borrow().clone();
                 glib::spawn_future_local(async move {
                     let params = serde_json::json!({
-                        "raw": raw,
-                        "baseHash": hash,
+                        "path": "",
+                        "value": parsed,
                     });
-                    match gw.request("config.apply", params).await {
+                    match gw.request("config.set", params).await {
                         Ok(_) => {
-                            sl.set_label("Applied successfully");
+                            sl.set_label("Saved successfully");
                             btn2.set_sensitive(false);
+                            debug!("config.set ok");
                         }
                         Err(e) => {
-                            sl.set_label(&format!("Apply failed: {e}"));
+                            sl.set_label(&format!("Save failed: {e}"));
                             btn2.set_sensitive(true);
+                            warn!("config.set: {e}");
                         }
                     }
                 });

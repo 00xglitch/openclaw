@@ -1,6 +1,7 @@
 use gtk4::{self, Orientation};
 use libadwaita as adw;
 use libadwaita::prelude::*;
+use tracing::{debug, warn};
 
 use crate::state::SharedClient;
 use crate::widgets::status_placeholder;
@@ -36,13 +37,7 @@ impl SkillsView {
             .description("Agent skills and capabilities")
             .build();
 
-        let list_box = gtk4::ListBox::builder()
-            .selection_mode(gtk4::SelectionMode::None)
-            .css_classes(vec!["boxed-list".to_string()])
-            .build();
-
         content.append(&group);
-        content.append(&list_box);
 
         let clamp = adw::Clamp::builder()
             .maximum_size(700)
@@ -53,8 +48,6 @@ impl SkillsView {
         let loading = status_placeholder::loading("Loading skills...");
         container.append(&loading);
 
-        // Load skills via RPC
-        let lb = list_box.clone();
         let c = client;
         let container_ref = container.clone();
         let scroll_ref = scroll.clone();
@@ -64,11 +57,15 @@ impl SkillsView {
                 && let Some(gw) = c.lock().unwrap().clone()
             {
                 loaded = true;
-                let lb2 = lb.clone();
                 let cr = container_ref.clone();
                 let sr = scroll_ref.clone();
+                let group2 = group.clone();
+                let client_inner = gw.clone();
                 gtk4::glib::spawn_future_local(async move {
-                    match gw.request("skills.status", serde_json::json!({})).await {
+                    match client_inner
+                        .request("skills.status", serde_json::json!({}))
+                        .await
+                    {
                         Ok(payload) => {
                             let skills = payload
                                 .get("skills")
@@ -82,24 +79,106 @@ impl SkillsView {
                                     Some("Skills are loaded from the agent's skills directory"),
                                 );
                                 status_placeholder::swap_child(&cr, &empty);
-                            } else {
-                                for skill in &skills {
-                                    let name = skill
-                                        .get("name")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("unnamed");
-                                    let status = skill
-                                        .get("status")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("unknown");
+                                return;
+                            }
+                            for skill in &skills {
+                                let skill_id = skill
+                                    .get("id")
+                                    .or_else(|| skill.get("skillId"))
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("unknown")
+                                    .to_string();
+                                let name = skill
+                                    .get("name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("unnamed");
+                                let status = skill
+                                    .get("status")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("unknown");
+                                let enabled = skill
+                                    .get("enabled")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(true);
+                                let installed = status != "not-installed";
+
+                                if installed {
+                                    // Installed skill: show a switch row for enable/disable
+                                    let row = adw::SwitchRow::builder()
+                                        .title(name)
+                                        .subtitle(format!("{skill_id} - {status}"))
+                                        .active(enabled)
+                                        .build();
+
+                                    let gw_toggle = gw.clone();
+                                    let sid = skill_id.clone();
+                                    row.connect_active_notify(move |switch| {
+                                        let new_enabled = switch.is_active();
+                                        let gw2 = gw_toggle.clone();
+                                        let sid2 = sid.clone();
+                                        debug!(
+                                            "skills.enable: {sid2} -> enabled={new_enabled}"
+                                        );
+                                        gtk4::glib::spawn_future_local(async move {
+                                            let params = serde_json::json!({
+                                                "skillId": sid2,
+                                                "enabled": new_enabled,
+                                            });
+                                            match gw2.request("skills.enable", params).await {
+                                                Ok(_) => {
+                                                    debug!("skills.enable ok for {sid2}");
+                                                }
+                                                Err(e) => {
+                                                    warn!("skills.enable failed: {e}");
+                                                }
+                                            }
+                                        });
+                                    });
+                                    group2.add(&row);
+                                } else {
+                                    // Not installed: show an action row with install button
                                     let row = adw::ActionRow::builder()
                                         .title(name)
-                                        .subtitle(status)
+                                        .subtitle(format!("{skill_id} - not installed"))
                                         .build();
-                                    lb2.append(&row);
+
+                                    let install_btn = gtk4::Button::builder()
+                                        .label("Install")
+                                        .css_classes(vec!["suggested-action".to_string()])
+                                        .valign(gtk4::Align::Center)
+                                        .build();
+
+                                    let gw_install = gw.clone();
+                                    let sid = skill_id.clone();
+                                    install_btn.connect_clicked(move |btn| {
+                                        btn.set_sensitive(false);
+                                        btn.set_label("Installing...");
+                                        let gw2 = gw_install.clone();
+                                        let sid2 = sid.clone();
+                                        let btn2 = btn.clone();
+                                        gtk4::glib::spawn_future_local(async move {
+                                            let params = serde_json::json!({
+                                                "skillId": sid2,
+                                            });
+                                            match gw2.request("skills.install", params).await {
+                                                Ok(_) => {
+                                                    debug!("skills.install ok for {sid2}");
+                                                    btn2.set_label("Installed");
+                                                }
+                                                Err(e) => {
+                                                    warn!("skills.install failed: {e}");
+                                                    btn2.set_label("Failed");
+                                                    btn2.set_sensitive(true);
+                                                }
+                                            }
+                                        });
+                                    });
+
+                                    row.add_suffix(&install_btn);
+                                    group2.add(&row);
                                 }
-                                status_placeholder::swap_child(&cr, &sr);
                             }
+                            status_placeholder::swap_child(&cr, &sr);
                         }
                         Err(e) => {
                             let err = status_placeholder::error(
